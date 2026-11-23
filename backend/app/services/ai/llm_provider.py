@@ -35,8 +35,15 @@ class LLMProvider(AIProvider):
         """POST with retries on transient errors (429/5xx/network)."""
         last_exc: Exception | None = None
         for attempt in range(self.max_retries + 1):
+            timeout = self.timeout
+            deadline = getattr(self, "deadline", None)
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining < 5:
+                    raise AIProviderError(f"{self.name} time budget exhausted")
+                timeout = min(timeout, remaining)
             try:
-                resp = self._client.post(url, headers=headers, json=payload, timeout=self.timeout)
+                resp = self._client.post(url, headers=headers, json=payload, timeout=timeout)
             except httpx.HTTPError as exc:
                 last_exc = exc
                 logger.warning("%s request failed (attempt %s): %s", self.name, attempt + 1, exc)
@@ -47,6 +54,9 @@ class LLMProvider(AIProvider):
                     raise AIProviderError(f"{self.name} rejected the API key (HTTP {resp.status_code})")
                 # provider error messages go to server logs only (never to users)
                 logger.warning("%s HTTP %s: %s", self.name, resp.status_code, resp.text[:300].replace("\n", " "))
+                if resp.status_code == 429 and "quota" in resp.text.lower():
+                    # quota exhausted: retrying within seconds will not help
+                    raise AIProviderError(f"{self.name} quota exceeded (HTTP 429)", status_code=429)
                 if resp.status_code in (429, 500, 502, 503, 504, 529):
                     last_exc = AIProviderError(f"{self.name} temporarily unavailable (HTTP {resp.status_code})",
                                                status_code=resp.status_code)

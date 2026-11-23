@@ -28,11 +28,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     claude_model: str = "claude-sonnet-5-5"
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
-    ai_timeout_seconds: float = 90.0
+    gemini_model: str = "gemini-3.8-flash"
+    ai_timeout_seconds: float = 60.0
     ai_max_retries: int = 3
     # When the configured provider fails, fall back to the offline heuristic engine.
     ai_fallback_to_mock: bool = True
+    # Total seconds a conversion may spend waiting on the AI provider before remaining
+    # parts use the offline engine (keeps jobs inside serverless time limits).
+    ai_time_budget_seconds: float = 200.0
 
     # --- Storage -----------------------------------------------------------
     storage_dir: Path = BACKEND_DIR / "storage"

@@ -208,3 +208,26 @@ def test_gemini_fails_over_when_model_overloaded():
     assert p.analyze_chunk(CHUNK, [4, 5], {}).topics
     assert gp.GeminiProvider._resolved_model == "gemini-2.0-flash"
     gp.GeminiProvider._resolved_model = None
+
+
+def test_time_budget_switches_to_offline_engine():
+    import time as _t
+
+    class Slow(MockProvider):
+        name = "slow"
+
+        def analyze_chunk(self, *a):
+            raise AssertionError("primary must not be called after the deadline")
+
+    rp = ResilientProvider(Slow(), MockProvider(), time_budget=0.01)
+    _t.sleep(0.02)
+    assert rp.analyze_chunk(CHUNK, [4, 5], {}).topics
+    assert rp.fallback_used and any("too slow" in w for w in rp.warnings)
+
+
+def test_quota_exhausted_is_not_retried():
+    transport, calls = _transport([httpx.Response(429, json={"error": {"message": "You exceeded your current quota"}})])
+    p = GeminiProvider("k", "m", client=httpx.Client(transport=transport), max_retries=3)
+    with pytest.raises(AIProviderError, match="quota"):
+        p.analyze_chunk(CHUNK, [4, 5], {})
+    assert calls["n"] == 1

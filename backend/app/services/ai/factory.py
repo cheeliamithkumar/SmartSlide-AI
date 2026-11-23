@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from app.config import Settings, get_settings
 from app.schemas import ChunkAnalysis, DocumentOverview, Slide, Topic
@@ -34,8 +35,12 @@ class ResilientProvider(AIProvider):
     Records warnings so the user is told when fallback content was used.
     """
 
-    def __init__(self, primary: AIProvider | None, fallback: AIProvider | None, init_error: str | None = None):
+    def __init__(self, primary: AIProvider | None, fallback: AIProvider | None, init_error: str | None = None,
+                 time_budget: float | None = None):
         self.primary = primary
+        self.deadline = time.monotonic() + time_budget if time_budget else None
+        if primary is not None and self.deadline is not None:
+            primary.deadline = self.deadline  # individual HTTP calls respect the overall budget
         self.fallback = fallback
         self.warnings: list[str] = []
         self.fallback_used = False
@@ -48,6 +53,11 @@ class ResilientProvider(AIProvider):
             self.warnings.append(msg)
 
     def _call(self, method: str, *args):
+        if self.primary is not None and self.deadline and time.monotonic() > self.deadline and self.fallback:
+            self._warn(f"AI provider '{self.primary.name}' was too slow; offline extraction was used for the "
+                       "remaining content.")
+            self.fallback_used = True
+            return getattr(self.fallback, method)(*args)
         if self.primary is not None:
             try:
                 return getattr(self.primary, method)(*args)
@@ -90,7 +100,7 @@ def get_provider(name: str | None = None) -> ResilientProvider:
         if fallback is None:
             raise
         return ResilientProvider(None, fallback, init_error=f"{exc}. Using offline demo mode instead.")
-    return ResilientProvider(primary, fallback)
+    return ResilientProvider(primary, fallback, time_budget=settings.ai_time_budget_seconds)
 
 
 def provider_status() -> dict:

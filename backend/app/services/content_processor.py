@@ -128,9 +128,13 @@ def key_terms(t: Topic, n: int = 5) -> list[str]:
     return terms[:n]
 
 
+def _cap(text: str) -> str:
+    return text[:1].upper() + text[1:] if text else text
+
+
 def _mindmap(center: str, labels: list[str]) -> Diagram:
     return Diagram(kind="mindmap", center=short_label(center, 6, 48),
-                   nodes=[DiagramNode(label=short_label(x)) for x in labels[:6]])
+                   nodes=[DiagramNode(label=_cap(short_label(x))) for x in labels[:6]])
 
 
 def _roadmap(title: str, topics: list[Topic], priority: float, max_nodes: int = 6) -> _Candidate | None:

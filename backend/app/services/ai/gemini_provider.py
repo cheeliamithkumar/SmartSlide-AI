@@ -28,9 +28,10 @@ def usable_models(models: list[dict]) -> list[str]:
         m["name"].split("/")[-1] for m in models
         if "generateContent" in (m.get("supportedGenerationMethods") or [])
         and "flash" in m.get("name", "")
-        and not re.search(r"(lite|image|tts|live|audio|exp|preview|thinking|embedding)", m.get("name", ""))
+        and not re.search(r"(image|tts|live|audio|exp|preview|thinking|embedding)", m.get("name", ""))
     ]
-    return sorted(set(usable), key=_version_key, reverse=True)
+    # newest first; full Flash models before their "lite" variants
+    return sorted(set(usable), key=lambda n: (_version_key(n), "lite" not in n), reverse=True)
 
 
 def pick_model(models: list[dict]) -> str | None:
@@ -77,7 +78,7 @@ class GeminiProvider(LLMProvider):
         except AIProviderError as exc:
             # Model retired/unknown (400/404) or persistently overloaded/rate limited (429/503):
             # try the other currently available Flash models before giving up.
-            if exc.status_code not in (400, 404, 429, 500, 503):
+            if exc.status_code not in (400, 404, 429, 500, 503) or "quota" in str(exc):
                 raise
             data = None
             for alt in [m for m in self._discover_models() if m != model][:3]:
