@@ -38,7 +38,6 @@ export const api = {
         access: 'private',
         token,
         contentType: 'application/pdf',
-        addRandomSuffix: true,
         multipart: file.size > 8 * 1024 * 1024,
         onUploadProgress: ({ percentage }) => onProgress?.(Math.min(99, Math.round(percentage))),
       })
