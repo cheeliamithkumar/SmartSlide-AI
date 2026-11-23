@@ -174,9 +174,8 @@ class DeckBuilder:
     def _footer(self, slide, idx: int, pages: list[int], dark: bool = False, x=None):
         t = self.theme
         color = t.muted if not dark else ("F9FAFB" if t.id == "dark_academic" else t.on_primary)
-        name = self.doc_name if len(self.doc_name) <= 60 else self.doc_name[:57] + "…"
         src = _page_label(pages)
-        left = f"{name}  •  Source: {src}" if src else name
+        left = f"Source: {src}" if src else ""
         x = MARGIN if x is None else x
         self._text(slide, x, FOOTER_Y, Inches(9.5) - (x - MARGIN), Inches(0.35), left, 10, color, name="Footer")
         self._text(slide, SLIDE_W - MARGIN - Inches(1.5), FOOTER_Y, Inches(1.5), Inches(0.35),
@@ -189,7 +188,7 @@ class DeckBuilder:
         if data.visual_suggestion:
             parts.append(f"Visual suggestion: {data.visual_suggestion}")
         if data.source_pages:
-            parts.append(f"Source: {_page_label(data.source_pages)} of {self.doc_name}")
+            parts.append(f"Source: {_page_label(data.source_pages)} of the original document")
         if parts:
             slide.notes_slide.notes_text_frame.text = "\n\n".join(parts)
 
@@ -205,8 +204,6 @@ class DeckBuilder:
         else:
             self._rect(s, 0, 0, Inches(0.35), SLIDE_H, t.primary)
         fg = t.on_primary if dark and t.id != "dark_academic" else (t.text if not dark else "F9FAFB")
-        self._text(s, Inches(0.9), Inches(1.5), Inches(3.5), Inches(0.4), "SMARTSLIDE AI", 12,
-                   t.accent if dark else t.primary, bold=True)
         tsize = 44 if len(d.title) < 45 else (36 if len(d.title) < 80 else 30)
         self._text(s, Inches(0.9), Inches(2.0), Inches(8.4), Inches(2.6), d.title, tsize, fg, bold=True,
                    font=t.heading_font, anchor=MSO_ANCHOR.BOTTOM, name="Title")
@@ -214,8 +211,6 @@ class DeckBuilder:
         if d.subtitle:
             self._text(s, Inches(0.9), Inches(5.05), Inches(8.4), Inches(1.0), d.subtitle, 18,
                        fg if dark else t.muted, name="Subtitle")
-        self._text(s, Inches(0.9), FOOTER_Y - Inches(0.1), Inches(9), Inches(0.35), f"Source: {self.doc_name}", 10,
-                   fg if dark else t.muted, name="Footer")
 
     def _section_slide(self, s, d: Slide, idx, number: int):
         t = self.theme
@@ -631,8 +626,8 @@ class DeckBuilder:
                 self._content_slide(s, d, i)
             self._notes(s, d)
         self.prs.core_properties.title = slides[0].title if slides else "Presentation"
-        self.prs.core_properties.author = "SmartSlide AI"
-        self.prs.core_properties.subject = f"{self.kind.title()} presentation of {self.doc_name}"
+        self.prs.core_properties.author = ""
+        self.prs.core_properties.subject = f"{self.kind.title()} presentation"
         output.parent.mkdir(parents=True, exist_ok=True)
         tmp = output.with_suffix(".tmp.pptx")
         self.prs.save(str(tmp))

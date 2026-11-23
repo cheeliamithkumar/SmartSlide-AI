@@ -187,3 +187,30 @@ def test_cannot_delete_last_slide(client, samples):
 def test_unknown_presentation_404(client):
     assert client.get("/api/presentations/nope").status_code == 404
     assert client.get("/api/presentations/nope/download").status_code == 404
+
+
+def test_no_filename_or_branding_in_pptx(client, completed_job):
+    for p in completed_job["presentations"]:
+        prs = PptxPresentation(io.BytesIO(client.get(f"/api/presentations/{p['id']}/download").content))
+        text = _all_text(prs).lower()
+        notes = " ".join(s.notes_slide.notes_text_frame.text for s in prs.slides if s.has_notes_slide).lower()
+        assert "photosynthesis.pdf" not in text and "photosynthesis.pdf" not in notes
+        assert "smartslide" not in text and "smartslide" not in notes
+        assert "source: p" in text  # page references are kept
+
+
+def test_regenerate_changes_every_slide_type(client, samples):
+    doc = upload(client, samples["text"]).json()
+    job = wait_for_job(client, client.post("/api/jobs", json={"document_id": doc["id"]}).json()["id"])
+    visible = ("title", "subtitle", "bullets", "definitions", "steps", "comparison", "diagram")
+    for p in job["presentations"]:
+        slides = client.get(f"/api/presentations/{p['id']}").json()["slides"]
+        for s in slides:
+            r = client.post(f"/api/presentations/{p['id']}/slides/{s['id']}/regenerate")
+            if s["type"] == "title":
+                assert r.status_code == 422
+                continue
+            assert r.status_code == 200, (s["type"], s["title"], r.json())
+            new = r.json()
+            assert any(new[k] != s[k] for k in visible), (s["type"], s["title"])
+            assert new["id"] == s["id"] and new["type"] == s["type"]

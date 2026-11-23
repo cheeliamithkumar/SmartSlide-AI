@@ -60,6 +60,11 @@ def _index(slides: list[Slide], slide_id: str) -> int:
     raise HTTPException(status.HTTP_404_NOT_FOUND, "Slide not found")
 
 
+def _visible(s: Slide) -> str:
+    """The parts of a slide that are actually shown, used to detect a no-op regeneration."""
+    return s.model_dump_json(include={"title", "subtitle", "bullets", "definitions", "steps", "comparison", "diagram"})
+
+
 @router.get("/{pres_id}", response_model=PresentationOut)
 def get_presentation(pres_id: str, db: Session = Depends(get_db)):
     return _out(_get(pres_id, db))
@@ -146,15 +151,25 @@ async def regenerate_slide(pres_id: str, slide_id: str, db: Session = Depends(ge
     if not source.strip():
         raise HTTPException(status.HTTP_409_CONFLICT, "The source text for this slide is no longer available.")
     provider = get_provider((pres.job.options or {}).get("provider") if pres.job else None)
-    ctx = {"kind": pres.kind, "doc_name": doc.original_filename, "variant": pres.version,
-           "audience": (pres.job.options or {}).get("audience", "students") if pres.job else "students"}
-    try:
-        new = await run_in_threadpool(provider.regenerate_slide, slide, source, ctx)
-    except AIProviderError as exc:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"AI provider unavailable: {exc}") from exc
-    new.id, new.type, new.source_pages = slide.id, slide.type, slide.source_pages
-    if new.diagram is None:
-        new.diagram = slide.diagram  # keep the slide's visual when the AI rewrites the text
+    base_ctx = {"kind": pres.kind, "doc_name": doc.original_filename,
+                "audience": (pres.job.options or {}).get("audience", "students") if pres.job else "students"}
+    new = None
+    # try a few variations until the visible content actually changes
+    for attempt in range(3):
+        try:
+            cand = await run_in_threadpool(provider.regenerate_slide, slide, source,
+                                           {**base_ctx, "variant": pres.version + attempt})
+        except AIProviderError as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"AI provider unavailable: {exc}") from exc
+        cand.id, cand.type, cand.source_pages = slide.id, slide.type, slide.source_pages
+        if cand.diagram is None:
+            cand.diagram = slide.diagram  # keep the slide's visual when the AI rewrites the text
+        if _visible(cand) != _visible(slide):
+            new = cand
+            break
+    if new is None:
+        raise HTTPException(409, "No alternative content was found in this slide's source pages. "
+                                 "Try editing it manually instead.")
     slides[i] = new
     _save(pres, slides, db)
     return new

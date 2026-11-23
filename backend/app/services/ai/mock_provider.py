@@ -17,6 +17,7 @@ from app.schemas import (
     ChunkAnalysis,
     Comparison,
     Definition,
+    DiagramNode,
     DocumentOverview,
     KeyPoint,
     Slide,
@@ -28,6 +29,7 @@ from app.schemas import (
 )
 from app.services.ai.base import AIProvider
 from app.utils.text import (
+    STOPWORDS as STOP,
     clean_heading,
     is_bullet_line,
     paragraphs,
@@ -404,43 +406,124 @@ class MockProvider(AIProvider):
 
     # ------------------------------------------------------------------
     def regenerate_slide(self, slide: Slide, source_text: str, context: dict) -> Slide:
+        """Rewrite a slide from its source pages.
+
+        Each call (``variant``) rotates through different source sentences and alternates
+        between concise and fuller wording, so repeated regeneration gives visibly
+        different, still source-grounded content for every slide type.
+        """
         segs = _segments(source_text) or [_Segment(title=slide.title)]
         sents = [x for s in segs for x in _sentences(s)]
         new = slide.model_copy(deep=True)
         if not sents:
             return new
-        variant = int(context.get("variant", 1))
+        v = int(context.get("variant", 1))
+        detailed = context.get("kind") == "detailed"
         scores = _score(sents, slide.title)
         ranked = sorted(range(len(sents)), key=lambda i: scores[i], reverse=True)
-        existing = {re.sub(r"\W+", "", b.lower())[:60] for b in slide.bullets}
-        n = 5 if context.get("kind") == "detailed" else 4
-        # rotate through the ranking so repeated regenerations give fresh wording/points
-        offset = (variant * 2) % max(1, len(ranked))
+        offset = (v * 2) % max(1, len(ranked))
         order = ranked[offset:] + ranked[:offset]
-        fresh = [i for i in order if re.sub(r"\W+", "", simplify(sents[i][1]).lower())[:60] not in existing]
-        pick = sorted((fresh or order)[:n])
-        max_len = 200 if context.get("kind") == "detailed" else 115
-        bullets = _dedupe([shorten(simplify(sents[i][1]), max_len) for i in pick])
+        concise = v % 2 == 0
 
-        if slide.type == SlideType.definition:
-            defs = _find_definitions(sents, slide.title)
+        def key(text: str) -> str:
+            return re.sub(r"\W+", "", text.lower())[:60]
+
+        def best_source(text: str) -> str:
+            """Source sentence that best matches a (shortened) point, for fuller wording."""
+            toks = set(tokens(text))
+            cand = max(sents, key=lambda x: len(toks & set(tokens(x[1]))))
+            return cand[1]
+
+        def reword(text: str, short_len: int, long_len: int) -> str:
+            if concise:
+                return shorten(simplify(text), short_len)
+            return shorten(best_source(text), long_len)
+
+        t = slide.type
+        if t == SlideType.definition:
+            defs = _find_definitions(sents, slide.title) or [
+                SourcedDefinition(term=d.term, definition=d.definition) for d in slide.definitions]
             if defs:
-                new.definitions = [Definition(term=d.term, definition=d.definition) for d in defs[:4]]
-        elif slide.type == SlideType.process:
-            steps = []
-            for s in segs:
-                steps.extend(_find_steps(s))
+                k = v % len(defs)
+                defs = defs[k:] + defs[:k]
+                new.definitions = [Definition(term=d.term,
+                                              definition=shorten(simplify(d.definition), 160) if concise
+                                              else d.definition)
+                                   for d in defs[:max(3, len(slide.definitions) or 3)][:4]]
+        elif t == SlideType.process:
+            steps = [st for sg in segs for st in _find_steps(sg)] or list(slide.steps)
             if steps:
-                new.steps = steps[:6]
-        elif slide.type == SlideType.comparison:
-            for s in segs:
-                comp = _find_comparison(s, _sentences(s), slide.source_pages)
-                if comp:
-                    c = comp[0]
-                    new.comparison = Comparison(left_title=c.left_title, right_title=c.right_title,
-                                                left=c.left, right=c.right)
-                    break
-        elif slide.type not in (SlideType.title, SlideType.section):
-            new.bullets = bullets
-        new.notes = "Regenerated from source pages. " + " ".join(shorten(sents[i][1], 220) for i in sorted(ranked[:3]))
+                new.steps = [reword(st, 70, 140) for st in steps[:6]]
+        elif t == SlideType.comparison:
+            comp = next((c for sg in segs if (c := _find_comparison(sg, _sentences(sg), slide.source_pages))), None)
+            base = slide.comparison
+            if comp:
+                left, right = comp[0].left, comp[0].right
+                lt, rt = comp[0].left_title, comp[0].right_title
+            elif base:
+                left, right, lt, rt = base.left, base.right, base.left_title, base.right_title
+            else:
+                left = right = []
+                lt = rt = ""
+            if left or right:
+                k = v % max(1, min(len(left), len(right)) or 1)
+                new.comparison = Comparison(left_title=lt, right_title=rt,
+                                            left=[reword(x, 80, 150) for x in (left[k:] + left[:k])[:4]],
+                                            right=[reword(x, 80, 150) for x in (right[k:] + right[:k])[:4]])
+        elif t == SlideType.section:
+            pick = next((i for i in order if not _META.search(sents[i][1])), order[0])
+            new.subtitle = shorten(simplify(sents[pick][1]), 150)
+        elif t == SlideType.diagram and slide.diagram is not None:
+            d = new.diagram
+            if d.kind == "timeline":
+                for node in d.nodes:
+                    ltoks = set(tokens(node.label))
+                    matches = sorted(range(len(sents)), key=lambda i: -len(ltoks & set(tokens(sents[i][1]))))
+                    matches = [i for i in matches if ltoks & set(tokens(sents[i][1]))] or matches
+                    node.detail = shorten(simplify(sents[matches[v % len(matches)]][1]), 80)
+            else:
+                current = {key(n.label) for n in d.nodes}
+                phrases = [p for p in _ranked_phrases(sents, d.center or slide.title) if key(p) not in current]
+                if phrases:
+                    k = v % max(1, len(phrases))
+                    phrases = phrases[k:] + phrases[:k]
+                    d.nodes = [DiagramNode(label=p) for p in phrases[: max(3, len(d.nodes) or 5)][:6]]
+        elif t != SlideType.title:
+            existing = {key(b) for b in slide.bullets}
+            n = len(slide.bullets) or (5 if detailed else 4)
+            fresh = [i for i in order if key(simplify(sents[i][1])) not in existing]
+            pick = sorted((fresh or order)[:n])
+            max_len = 200 if detailed else 130
+            new.bullets = _dedupe([reword(sents[i][1], max_len - 40, max_len) for i in pick])
+            if t == SlideType.content and new.diagram and new.diagram.kind == "mindmap":
+                current = {key(nd.label) for nd in new.diagram.nodes}
+                phrases = [p for p in _ranked_phrases(sents, slide.title) if key(p) not in current]
+                if len(phrases) >= 3:
+                    new.diagram.nodes = [DiagramNode(label=p) for p in phrases[:len(new.diagram.nodes) or 4]]
+        new.notes = " ".join(shorten(sents[i][1], 220) for i in sorted(order[:3]))
         return new
+
+
+def _ranked_phrases(sents, title: str) -> list[str]:
+    """Frequent key phrases (bigrams first) in the source sentences, excluding title words."""
+    title_toks = set(tokens(title))
+    uni: Counter[str] = Counter()
+    bi: Counter[str] = Counter()
+    for _, text, _ in sents:
+        low = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z0-9\-]+", text)]
+        for i, w in enumerate(low):
+            if w in STOP or len(w) < 4 or w in title_toks:
+                continue
+            uni[w] += 1
+            if i + 1 < len(low) and low[i + 1] not in STOP and len(low[i + 1]) >= 3:
+                bi[f"{w} {low[i + 1]}"] += 1
+    ranked = [(p, c * 1.6) for p, c in bi.items() if c >= 2] + [(w, float(c)) for w, c in uni.items() if c >= 2]
+    ranked.sort(key=lambda x: -x[1])
+    out: list[str] = []
+    for p, _ in ranked:
+        if any(p in o.lower() or o.lower() in p for o in out):
+            continue
+        out.append(title_case(p))
+        if len(out) >= 12:
+            break
+    return out

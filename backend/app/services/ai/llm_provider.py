@@ -99,7 +99,7 @@ class LLMProvider(AIProvider):
         return self._structured(self._system(context), user, DocumentOverview, max_tokens=3000)
 
     def regenerate_slide(self, slide: Slide, source_text: str, context: dict) -> Slide:
-        current = slide.model_dump(include={"type", "title", "bullets", "definitions", "steps", "comparison"})
+        current = slide.model_dump(include={"type", "title", "subtitle", "bullets", "definitions", "steps", "comparison", "diagram"})
         user = prompts.SLIDE_PROMPT.format(
             kind=context.get("kind", "summary"),
             slide_type=slide.type.value,

@@ -31,15 +31,12 @@ function Header({ title, eyebrow, c, font }) {
   )
 }
 
-function Footer({ slide, index, total, docName, c, dark, left = 47 }) {
+function Footer({ slide, index, total, c, dark, left = 47 }) {
   const color = dark ? '#F9FAFB' : hex(c.muted)
   const src = pageLabel(slide.source_pages)
   return (
     <div style={{ position: 'absolute', left: u(left), right: u(47), bottom: u(14), display: 'flex', justifyContent: 'space-between', color, fontSize: u(10) }}>
-      <span className="truncate" style={{ maxWidth: '75%' }}>
-        {docName}
-        {src && `  •  Source: ${src}`}
-      </span>
+      <span className="truncate" style={{ maxWidth: '75%' }}>{src && `Source: ${src}`}</span>
       <span>
         {index} / {total}
       </span>
@@ -288,12 +285,12 @@ function ContentBody({ slide, c, font }) {
   )
 }
 
-export default function SlideCanvas({ slide, index, total, template, docName = '', className = '' }) {
+export default function SlideCanvas({ slide, index, total, template, className = "" }) {
   const t = template || FALLBACK
   const c = t.colors
   const font = `"${t.font}", ${t.font === 'Georgia' ? 'serif' : 'sans-serif'}`
   const darkHero = t.id !== 'minimal_white'
-  const common = { slide, index, total, docName, c }
+  const common = { slide, index, total, c }
   let body = null
   let bg = hex(c.background)
 
@@ -311,9 +308,6 @@ export default function SlideCanvas({ slide, index, total, template, docName = '
           ) : (
             <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: u(25), background: hex(c.primary) }} />
           )}
-          <div style={{ position: 'absolute', left: u(65), top: u(108), width: u(605) }}>
-            <div style={{ color: darkHero ? hex(c.accent) : hex(c.primary), fontSize: u(12), fontWeight: 700, letterSpacing: '0.08em' }}>SMARTSLIDE AI</div>
-          </div>
           <div style={{ position: 'absolute', left: u(65), top: u(144), width: u(605), height: u(187), display: 'flex', alignItems: 'flex-end' }}>
             <div style={{ color: fg, fontFamily: font, fontWeight: 700, lineHeight: 1.1, fontSize: u(slide.title.length < 45 ? 44 : slide.title.length < 80 ? 36 : 30) }}>{slide.title}</div>
           </div>
@@ -321,7 +315,6 @@ export default function SlideCanvas({ slide, index, total, template, docName = '
           {slide.subtitle && (
             <div style={{ position: 'absolute', left: u(65), top: u(364), width: u(605), color: darkHero ? '#E5E7EB' : hex(c.muted), fontSize: u(18) }}>{slide.subtitle}</div>
           )}
-          <div style={{ position: 'absolute', left: u(65), bottom: u(22), color: darkHero ? '#E5E7EB' : hex(c.muted), fontSize: u(10) }}>Source: {docName}</div>
         </>
       )
       break

@@ -82,6 +82,7 @@ SLIDE_SCHEMA = {
     "definitions": [{"term": "...", "definition": "..."}],
     "steps": ["..."],
     "comparison": None,
+    "diagram": "only for slides that have one: same kind, with improved 'center' and 'nodes' [{label, detail}]",
     "notes": "speaker notes explaining the slide in 2-4 sentences",
     "visual_suggestion": "optional",
 }
@@ -89,7 +90,8 @@ SLIDE_SCHEMA = {
 SLIDE_PROMPT = """Rewrite this {kind} presentation slide so it is clearer and better structured, \
 using only facts from the source pages below. Keep the same slide type ("{slide_type}"). \
 Use the field(s) appropriate to the type: bullets for content/example/takeaways/conclusion, \
-definitions for definition slides, steps for process slides, comparison for comparison slides.
+definitions for definition slides, steps for process slides, comparison for comparison slides, \
+diagram nodes for diagram slides. The result must differ from the current slide.
 
 CURRENT SLIDE:
 {slide}
