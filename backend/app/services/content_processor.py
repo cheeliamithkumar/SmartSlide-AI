@@ -83,6 +83,10 @@ def _is_framing(title: str) -> bool:
     return bool(_FRAMING.match(title.strip()))
 
 
+_GENERIC_TERMS = frozenset("""allow allows allowed uses using provide provides include includes including make makes
+help helps become becomes occur occurs cause causes called known form forms take takes give gives keep keeps lead
+leads result results increase increases reduce reduces produce produces release releases""".split())
+
 _CYCLE = re.compile(r"\b(cycle|cyclic|loop|recycl\w*|regenerat\w*|repeat\w*|continu\w* again)\b", re.I)
 
 
@@ -112,7 +116,7 @@ def key_terms(t: Topic, n: int = 5) -> list[str]:
         words = re.findall(r"[A-Za-z][A-Za-z0-9\-]+", text)
         low = [w.lower() for w in words]
         for i, w in enumerate(low):
-            if w in STOPWORDS or len(w) < 4 or w in title_toks:
+            if w in STOPWORDS or w in _GENERIC_TERMS or len(w) < 4 or w in title_toks:
                 continue
             uni[w] += 1
             if i + 1 < len(low) and low[i + 1] not in STOPWORDS and len(low[i + 1]) >= 3:

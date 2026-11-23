@@ -99,7 +99,19 @@ def ground_analysis(analysis: ChunkAnalysis, source_text: str, pages: list[int])
     allowed = set(pages)
     norm_src = _norm(source_text)
     topics: list[Topic] = []
+    from app.schemas import strip_citations
+
     for t in analysis.topics:
+        t.summary = strip_citations(t.summary)
+        t.simplified_points = [strip_citations(p) for p in t.simplified_points]
+        for kp in t.key_points:
+            kp.text = strip_citations(kp.text)
+        for d in t.definitions:
+            d.definition = strip_citations(d.definition)
+        for ex in t.examples:
+            ex.text = strip_citations(ex.text)
+        if t.key_takeaway:
+            t.key_takeaway = strip_citations(t.key_takeaway)
         t.pages = _in_range(t.pages, allowed) or list(pages)
         for kp in t.key_points:
             kp.pages = _in_range(kp.pages, allowed) or t.pages

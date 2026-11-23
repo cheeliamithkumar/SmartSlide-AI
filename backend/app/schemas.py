@@ -1,6 +1,7 @@
 """Pydantic schemas: slide structure, AI structured output and API payloads."""
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -56,10 +57,18 @@ class Diagram(BaseModel):
     nodes: list[DiagramNode] = Field(default_factory=list, max_length=8)
 
 
+_CITATION = re.compile(r"\s*[\[(](?:pages?|pp?\.)\s*\d+(?:\s*[-–,]\s*\d+)*[\])]", re.I)
+
+
+def strip_citations(text: str) -> str:
+    """Remove inline source markers like "[Page 3]" (sources are shown in the slide footer)."""
+    return _CITATION.sub("", text).strip()
+
+
 def _clean_list(items: list[str]) -> list[str]:
     out = []
     for it in items:
-        s = " ".join(str(it).split())
+        s = " ".join(strip_citations(str(it)).split())
         if s:
             out.append(s[:600])
     return out
@@ -87,7 +96,7 @@ class Slide(BaseModel):
     @field_validator("title")
     @classmethod
     def _title(cls, v: str) -> str:
-        v = " ".join(v.split())
+        v = " ".join(strip_citations(v).split())
         return v or "Untitled"
 
     @field_validator("source_pages")

@@ -231,3 +231,11 @@ def test_quota_exhausted_is_not_retried():
     with pytest.raises(AIProviderError, match="quota"):
         p.analyze_chunk(CHUNK, [4, 5], {})
     assert calls["n"] == 1
+
+
+def test_citation_markers_are_removed_from_slide_text():
+    from app.schemas import Slide
+
+    s = Slide(title="Light [Page 2]", bullets=["Glucose is made [Page 1].", "Oxygen is released (pp. 2-3)"])
+    assert s.title == "Light"
+    assert s.bullets == ["Glucose is made.", "Oxygen is released"]
