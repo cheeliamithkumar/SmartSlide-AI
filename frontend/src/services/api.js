@@ -57,8 +57,9 @@ export const api = {
   getDocument: (id) => http.get(`/documents/${id}`).then((r) => r.data),
   getContent: (id) => http.get(`/documents/${id}/content`).then((r) => r.data),
 
-  // On serverless hosting the conversion runs inside this request, so allow it plenty of time.
-  createJob: (payload) => http.post('/jobs', payload, { timeout: 310000 }).then((r) => r.data),
+  createJob: (payload) => http.post('/jobs', payload).then((r) => r.data),
+  /** Run the next step of a conversion (each call finishes in under a minute). */
+  advanceJob: (id) => http.post(`/jobs/${id}/advance`, null, { timeout: 100000 }).then((r) => r.data),
   getJob: (id) => http.get(`/jobs/${id}`).then((r) => r.data),
 
   getPresentation: (id) => http.get(`/presentations/${id}`).then((r) => r.data),

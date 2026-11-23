@@ -24,27 +24,42 @@ export default function ProcessingPage() {
   useEffect(() => {
     let alive = true
     let timer
-    const poll = async () => {
-      try {
-        const j = await api.getJob(jobId)
-        if (!alive) return
-        failures.current = 0
-        setJob(j)
-        if (j.status === 'completed') {
-          timer = setTimeout(() => navigate(`/preview/${jobId}`, { replace: true }), 900)
-          return
-        }
-        if (j.status === 'failed') return
-      } catch (e) {
-        failures.current += 1
-        if (e.response?.status === 404 || failures.current > 5) {
-          setError(errorMessage(e, 'Lost connection to the server.'))
-          return
+    const sleep = (ms) => new Promise((r) => { timer = setTimeout(r, ms) })
+    // Drive the conversion in short steps. Progress is saved on the server after every
+    // step, so a dropped connection or a server restart simply resumes where it left off.
+    const run = async () => {
+      let lastProgress = -1
+      while (alive) {
+        try {
+          const j = await api.advanceJob(jobId)
+          if (!alive) return
+          failures.current = 0
+          setError(null)
+          setJob(j)
+          if (j.status === 'completed') {
+            timer = setTimeout(() => navigate(`/preview/${jobId}`, { replace: true }), 900)
+            return
+          }
+          if (j.status === 'failed') return
+          // nothing changed: another request is working on it, wait a moment before asking again
+          if (j.progress === lastProgress) await sleep(1500)
+          lastProgress = j.progress
+        } catch (e) {
+          if (!alive) return
+          if (e.response?.status === 404) {
+            setError(errorMessage(e, 'This conversion no longer exists.'))
+            return
+          }
+          failures.current += 1
+          if (failures.current > 8) {
+            setError(errorMessage(e, 'Lost connection to the server.') + ' Your progress is saved: refresh the page to continue.')
+            return
+          }
+          await sleep(Math.min(2000 * failures.current, 8000))
         }
       }
-      timer = setTimeout(poll, 1000)
     }
-    poll()
+    run()
     return () => {
       alive = false
       clearTimeout(timer)

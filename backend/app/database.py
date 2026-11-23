@@ -43,6 +43,29 @@ def _init_engine():
     from app import models  # noqa: F401
 
     Base.metadata.create_all(_engine)
+    _migrate(_engine)
+
+
+# Columns added after the first release: (table, column, SQLite type, PostgreSQL type)
+_ADDED_COLUMNS = [
+    ("documents", "extraction", "JSON", "JSON"),
+    ("jobs", "state", "JSON", "JSON"),
+    ("jobs", "lease_until", "DATETIME", "TIMESTAMP WITH TIME ZONE"),
+]
+
+
+def _migrate(engine) -> None:
+    """Tiny forward-only migration: add columns that existing databases are missing."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    pg = engine.dialect.name == "postgresql"
+    with engine.begin() as conn:
+        for table, column, sqlite_type, pg_type in _ADDED_COLUMNS:
+            if table not in insp.get_table_names():
+                continue
+            if column not in {c["name"] for c in insp.get_columns(table)}:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {pg_type if pg else sqlite_type}"))
 
 
 def get_engine():

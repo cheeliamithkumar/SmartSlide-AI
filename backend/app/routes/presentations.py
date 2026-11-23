@@ -150,7 +150,8 @@ async def regenerate_slide(pres_id: str, slide_id: str, db: Session = Depends(ge
     source = await run_in_threadpool(storage.source_text_for_pages, doc.id, pages, doc)
     if not source.strip():
         raise HTTPException(status.HTTP_409_CONFLICT, "The source text for this slide is no longer available.")
-    provider = get_provider((pres.job.options or {}).get("provider") if pres.job else None)
+    # keep regeneration well under proxy/serverless request limits
+    provider = get_provider((pres.job.options or {}).get("provider") if pres.job else None, time_budget=40)
     base_ctx = {"kind": pres.kind, "doc_name": doc.original_filename,
                 "audience": (pres.job.options or {}).get("audience", "students") if pres.job else "students"}
     new = None

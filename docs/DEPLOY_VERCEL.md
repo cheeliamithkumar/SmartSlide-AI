@@ -14,7 +14,9 @@ Configuration lives in `vercel.json`, `requirements.txt` (root, includes `backen
 
 On Vercel (detected via the `VERCEL` environment variable) the backend switches to serverless mode:
 
-- conversion jobs run **inside** the `POST /api/jobs` request (no background threads);
+- conversion jobs run as short, resumable steps: the browser calls `POST /api/jobs/{id}/advance`
+  repeatedly (each call < 1 minute); progress is stored in the database after every step and a lease
+  ensures one worker per job, so dropped connections simply resume;
 - extracted PDF text is stored **in the database**, so any function instance can continue the work;
 - PPTX files are rendered on demand into `/tmp` when downloaded;
 - runtime files go to `/tmp/smartslide`.

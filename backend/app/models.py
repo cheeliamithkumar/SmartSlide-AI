@@ -55,6 +55,9 @@ class Job(Base):
     options: Mapped[dict] = mapped_column(JSON, default=dict)
     provider_used: Mapped[str | None] = mapped_column(String(40), nullable=True)
     warnings: Mapped[list] = mapped_column(JSON, default=list)
+    # resumable pipeline progress (topics analysed so far, phase, ...) and worker lease
+    state: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

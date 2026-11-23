@@ -68,6 +68,11 @@ Starts background conversion.
 Constraints: `summary_slides` must be 6–20 and `detailed_slides` 12–40. `template` must be one of the `/templates`
 IDs. `kinds` must not be empty. Returns 404 for an unknown document and 422 for invalid options.
 
+### `POST /jobs/{id}/advance`
+Runs the next step(s) of a conversion and returns the job (each call takes under a minute). Safe to call
+repeatedly or concurrently. Serverless deployments rely on the client calling this until the job completes;
+self-hosted servers also run jobs in a background thread.
+
 ### `GET /jobs/{id}`
 Poll for status.
 

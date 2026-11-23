@@ -195,7 +195,7 @@ export default function ConfigurePage() {
               )}
             </div>
             <Button size="lg" className="w-full" icon={Sparkles} onClick={submit} loading={submitting} disabled={!opts.summary && !opts.detailed}>
-              {submitting ? 'Generating… this can take a minute' : 'Generate presentations'}
+              Generate presentations
             </Button>
           </aside>
         </div>

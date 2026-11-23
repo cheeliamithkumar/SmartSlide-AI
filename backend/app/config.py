@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     # Total seconds a conversion may spend waiting on the AI provider before remaining
     # parts use the offline engine (keeps jobs inside serverless time limits).
     ai_time_budget_seconds: float = 200.0
+    # Seconds of work per pipeline step (each browser "advance" request on serverless).
+    job_step_seconds: float = 45.0
 
     # --- Storage -----------------------------------------------------------
     storage_dir: Path = BACKEND_DIR / "storage"
@@ -47,9 +49,8 @@ class Settings(BaseSettings):
 
     # --- Execution mode ------------------------------------------------------
     # Serverless platforms (e.g. Vercel) have no persistent disk or background threads:
-    # jobs then run inside the request and extracted text is stored in the database.
+    # the browser drives jobs step by step and extracted text is stored in the database.
     serverless: bool = Field(default_factory=lambda: bool(os.environ.get("VERCEL")))
-    jobs_sync: bool | None = None
 
     # --- Limits ------------------------------------------------------------
     max_upload_mb: int = 25
@@ -80,10 +81,6 @@ class Settings(BaseSettings):
         if self.serverless and not os.environ.get("STORAGE_DIR"):
             # only /tmp is writable on serverless platforms
             self.storage_dir = Path("/tmp/smartslide")
-
-    @property
-    def run_jobs_inline(self) -> bool:
-        return self.serverless if self.jobs_sync is None else self.jobs_sync
 
     @property
     def cors_origin_list(self) -> list[str]:

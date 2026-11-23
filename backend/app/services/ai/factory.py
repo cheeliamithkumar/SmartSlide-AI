@@ -88,7 +88,7 @@ class ResilientProvider(AIProvider):
         return f"{self.primary.name}+fallback" if self.fallback_used else self.primary.name
 
 
-def get_provider(name: str | None = None) -> ResilientProvider:
+def get_provider(name: str | None = None, time_budget: float | None = None) -> ResilientProvider:
     settings = get_settings()
     name = name or settings.ai_provider
     fallback = MockProvider() if settings.ai_fallback_to_mock else None
@@ -100,7 +100,7 @@ def get_provider(name: str | None = None) -> ResilientProvider:
         if fallback is None:
             raise
         return ResilientProvider(None, fallback, init_error=f"{exc}. Using offline demo mode instead.")
-    return ResilientProvider(primary, fallback, time_budget=settings.ai_time_budget_seconds)
+    return ResilientProvider(primary, fallback, time_budget=time_budget or settings.ai_time_budget_seconds)
 
 
 def provider_status() -> dict:

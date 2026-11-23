@@ -40,13 +40,25 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
     db.add(job)
     db.commit()
     db.refresh(job)
-    if get_settings().run_jobs_inline:
-        # serverless: no background threads, so run the conversion inside this request
-        job_service.run_job(job.id)
+    if not get_settings().serverless:
+        job_service.submit(job.id)  # background thread; on serverless the client drives /advance
+    return job_out(job)
+
+
+@router.post("/{job_id}/advance", response_model=JobOut)
+def advance_job(job_id: str, db: Session = Depends(get_db)):
+    """Run the next step(s) of a conversion (each call takes under a minute).
+
+    Safe to call repeatedly or concurrently: a lease ensures one worker at a time, and
+    progress is saved after every step, so a dropped connection simply resumes.
+    """
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    if job.status in ("queued", "running"):
+        job_service.advance(job_id)
         db.expire_all()
-        job = db.get(Job, job.id)
-    else:
-        job_service.submit(job.id)
+        job = db.get(Job, job_id)
     return job_out(job)
 
 

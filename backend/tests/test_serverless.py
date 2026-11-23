@@ -13,7 +13,6 @@ from tests.conftest import upload
 def serverless(monkeypatch):
     s = get_settings()
     monkeypatch.setattr(s, "serverless", True)
-    monkeypatch.setattr(s, "jobs_sync", None)
     yield s
 
 
@@ -25,7 +24,6 @@ def test_postgres_url_normalised(monkeypatch):
 
 
 def test_serverless_flow_without_local_files(client, samples, serverless):
-    assert serverless.run_jobs_inline
     doc = upload(client, samples["text"]).json()
 
     # simulate a different server instance: uploaded PDF and file cache are gone
@@ -35,10 +33,15 @@ def test_serverless_flow_without_local_files(client, samples, serverless):
         Path(d.stored_path).unlink()
     (serverless.extracted_dir / f"{doc['id']}.json").unlink(missing_ok=True)
 
-    # job runs inside the request and is already complete in the response
+    # creating the job returns immediately; the client then drives it with short /advance calls
     r = client.post("/api/jobs", json={"document_id": doc["id"]})
     assert r.status_code == 202
     job = r.json()
+    assert job["status"] == "queued"
+    for _ in range(20):
+        job = client.post(f"/api/jobs/{job['id']}/advance").json()
+        if job["status"] in ("completed", "failed"):
+            break
     assert job["status"] == "completed", job
     pres_id = job["presentations"][0]["id"]
 
@@ -53,3 +56,26 @@ def test_serverless_flow_without_local_files(client, samples, serverless):
     r = client.get(f"/api/presentations/{pres_id}/download")
     assert r.status_code == 200 and len(r.content) > 10000
     assert client.get("/api/health").json()["serverless"] is True
+
+
+def test_advance_is_resumable_and_single_worker(client, samples, serverless, monkeypatch):
+    from app.services import jobs
+
+    doc = upload(client, samples["text"]).json()
+    job = client.post("/api/jobs", json={"document_id": doc["id"]}).json()
+    # a held lease makes advance a no-op (another worker is busy)
+    assert jobs._acquire(job["id"]) is True
+    assert jobs._acquire(job["id"]) is False
+    assert client.post(f"/api/jobs/{job['id']}/advance").json()["status"] == "queued"
+    jobs._release(job["id"])
+    # tiny steps: each advance does one unit and saves progress, so it resumes across calls
+    monkeypatch.setattr(serverless, "job_step_seconds", 0.01)
+    stages = []
+    for _ in range(20):
+        j = client.post(f"/api/jobs/{job['id']}/advance").json()
+        stages.append(j["stage"])
+        if j["status"] == "completed":
+            break
+    assert j["status"] == "completed", (stages, j)
+    assert "analyzing" in stages and "composing" in stages
+    assert len(stages) >= 3  # analyze -> overview -> compose took separate requests
