@@ -45,14 +45,19 @@ class LLMProvider(AIProvider):
                     return resp.json()
                 if resp.status_code in (401, 403):
                     raise AIProviderError(f"{self.name} rejected the API key (HTTP {resp.status_code})")
+                # provider error messages go to server logs only (never to users)
+                logger.warning("%s HTTP %s: %s", self.name, resp.status_code, resp.text[:300].replace("\n", " "))
                 if resp.status_code in (429, 500, 502, 503, 504, 529):
-                    last_exc = AIProviderError(f"{self.name} temporarily unavailable (HTTP {resp.status_code})")
+                    last_exc = AIProviderError(f"{self.name} temporarily unavailable (HTTP {resp.status_code})",
+                                               status_code=resp.status_code)
                 else:
                     # do not leak response bodies that might echo request content
                     raise AIProviderError(f"{self.name} request failed (HTTP {resp.status_code})",
                                           status_code=resp.status_code)
             if attempt < self.max_retries:
-                time.sleep(min(2 ** attempt, 8))
+                time.sleep(min(2 ** (attempt + 1), 10))
+        if isinstance(last_exc, AIProviderError):
+            raise last_exc  # keeps status_code so callers can fail over
         raise AIProviderError(str(last_exc) if last_exc else f"{self.name} request failed")
 
     def _structured(self, system: str, user: str, model: type[T], max_tokens: int = 8000) -> T:

@@ -185,3 +185,26 @@ def test_gemini_discovers_model_when_configured_one_is_retired():
     assert p.analyze_chunk(CHUNK, [4, 5], {}).topics
     assert gp.GeminiProvider._resolved_model == "gemini-3.1-flash"
     gp.GeminiProvider._resolved_model = None
+
+
+def test_gemini_fails_over_when_model_overloaded():
+    from app.services.ai import gemini_provider as gp
+
+    gp.GeminiProvider._resolved_model = None
+    models = {"models": [
+        {"name": "models/busy-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-2.0-flash", "supportedGenerationMethods": ["generateContent"]},
+    ]}
+    ok = {"candidates": [{"content": {"parts": [{"text": json.dumps(VALID)}]}}]}
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=models)
+        if "busy-flash" in str(request.url):
+            return httpx.Response(503, json={"error": {"message": "The model is overloaded."}})
+        return httpx.Response(200, json=ok)
+
+    p = gp.GeminiProvider("k", "busy-flash", client=httpx.Client(transport=httpx.MockTransport(handler)), max_retries=0)
+    assert p.analyze_chunk(CHUNK, [4, 5], {}).topics
+    assert gp.GeminiProvider._resolved_model == "gemini-2.0-flash"
+    gp.GeminiProvider._resolved_model = None

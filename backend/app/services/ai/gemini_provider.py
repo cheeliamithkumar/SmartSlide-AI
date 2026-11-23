@@ -22,33 +22,38 @@ def _version_key(name: str) -> tuple:
     return tuple(nums) + ((0,) * (2 - len(nums)))
 
 
-def pick_model(models: list[dict]) -> str | None:
-    """Choose the newest stable 'flash' model that supports generateContent."""
+def usable_models(models: list[dict]) -> list[str]:
+    """Stable 'flash' models supporting generateContent, newest first."""
     usable = [
         m["name"].split("/")[-1] for m in models
         if "generateContent" in (m.get("supportedGenerationMethods") or [])
         and "flash" in m.get("name", "")
         and not re.search(r"(lite|image|tts|live|audio|exp|preview|thinking|embedding)", m.get("name", ""))
     ]
-    if not usable:
-        return None
-    return sorted(usable, key=_version_key, reverse=True)[0]
+    return sorted(set(usable), key=_version_key, reverse=True)
+
+
+def pick_model(models: list[dict]) -> str | None:
+    """Choose the newest stable 'flash' model that supports generateContent."""
+    found = usable_models(models)
+    return found[0] if found else None
 
 
 class GeminiProvider(LLMProvider):
     name = "gemini"
     _resolved_model: str | None = None  # shared across instances once discovered
 
-    def _discover_model(self) -> str | None:
+    def _discover_models(self) -> list[str]:
         try:
             resp = self._client.get(f"{BASE_URL}/models", headers={"x-goog-api-key": self.api_key},
                                     params={"pageSize": 200}, timeout=self.timeout)
             if resp.status_code != 200:
-                return None
-            return pick_model(resp.json().get("models", []))
+                logger.warning("Gemini model listing failed: HTTP %s", resp.status_code)
+                return []
+            return usable_models(resp.json().get("models", []))
         except Exception as exc:  # pragma: no cover - network
             logger.warning("Gemini model discovery failed: %s", exc)
-            return None
+            return []
 
     def _request(self, model: str, system: str, user: str, max_tokens: int) -> dict:
         return self._post(
@@ -70,15 +75,22 @@ class GeminiProvider(LLMProvider):
         try:
             data = self._request(model, system, user, max_tokens)
         except AIProviderError as exc:
-            # configured model retired / unknown -> find a currently available Flash model
-            if exc.status_code not in (400, 404) or GeminiProvider._resolved_model:
+            # Model retired/unknown (400/404) or persistently overloaded/rate limited (429/503):
+            # try the other currently available Flash models before giving up.
+            if exc.status_code not in (400, 404, 429, 500, 503):
                 raise
-            found = self._discover_model()
-            if not found or found == model:
+            data = None
+            for alt in [m for m in self._discover_models() if m != model][:3]:
+                try:
+                    data = self._request(alt, system, user, max_tokens)
+                except AIProviderError as alt_exc:
+                    logger.warning("Gemini fallback model %s failed: %s", alt, alt_exc)
+                    continue
+                logger.info("Gemini model %s unavailable (%s); using %s", model, exc, alt)
+                GeminiProvider._resolved_model = alt
+                break
+            if data is None:
                 raise
-            logger.info("Gemini model %s unavailable, switching to %s", model, found)
-            GeminiProvider._resolved_model = found
-            data = self._request(found, system, user, max_tokens)
         candidates = data.get("candidates") or []
         if not candidates:
             raise AIProviderError("Gemini returned no candidates (content may have been blocked)")
