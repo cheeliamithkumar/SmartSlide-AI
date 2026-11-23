@@ -49,7 +49,8 @@ class LLMProvider(AIProvider):
                     last_exc = AIProviderError(f"{self.name} temporarily unavailable (HTTP {resp.status_code})")
                 else:
                     # do not leak response bodies that might echo request content
-                    raise AIProviderError(f"{self.name} request failed (HTTP {resp.status_code})")
+                    raise AIProviderError(f"{self.name} request failed (HTTP {resp.status_code})",
+                                          status_code=resp.status_code)
             if attempt < self.max_retries:
                 time.sleep(min(2 ** attempt, 8))
         raise AIProviderError(str(last_exc) if last_exc else f"{self.name} request failed")

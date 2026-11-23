@@ -149,3 +149,39 @@ def test_mock_regenerate_keeps_identity():
     slide = Slide(type=SlideType.content, title="Enzymes", bullets=["old"], source_pages=[4])
     new = MockProvider().regenerate_slide(slide, CHUNK, {"kind": "summary", "variant": 2})
     assert new.id == slide.id and new.bullets and new.bullets != ["old"]
+
+
+def test_gemini_skips_thought_parts():
+    body = {"candidates": [{"content": {"parts": [{"text": "thinking...", "thought": True},
+                                                  {"text": json.dumps(VALID)}]}}]}
+    transport, calls = _transport([httpx.Response(200, json=body)])
+    p = GeminiProvider("k", "gemini-x", client=httpx.Client(transport=transport), max_retries=0)
+    assert p.analyze_chunk(CHUNK, [4, 5], {}).topics
+    sent = json.loads(calls["requests"][0].content)
+    assert sent["generationConfig"]["maxOutputTokens"] >= 16384
+
+
+def test_gemini_discovers_model_when_configured_one_is_retired():
+    from app.services.ai import gemini_provider as gp
+
+    gp.GeminiProvider._resolved_model = None
+    models = {"models": [
+        {"name": "models/gemini-2.0-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.1-flash", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-3.1-flash-lite", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-9-flash-preview", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]},
+    ]}
+    ok = {"candidates": [{"content": {"parts": [{"text": json.dumps(VALID)}]}}]}
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=models)
+        if "old-model" in str(request.url):
+            return httpx.Response(404, json={"error": "not found"})
+        return httpx.Response(200, json=ok)
+
+    p = gp.GeminiProvider("k", "old-model", client=httpx.Client(transport=httpx.MockTransport(handler)), max_retries=0)
+    assert p.analyze_chunk(CHUNK, [4, 5], {}).topics
+    assert gp.GeminiProvider._resolved_model == "gemini-3.1-flash"
+    gp.GeminiProvider._resolved_model = None
