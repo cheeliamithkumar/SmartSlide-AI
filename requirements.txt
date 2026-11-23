@@ -1,2 +1,13 @@
-# Python dependencies for the Vercel serverless function (see api/index.py).
--r backend/requirements.txt
+# Python dependencies for the Vercel serverless function (api/index.py).
+# Keep in sync with backend/requirements.txt (uvicorn and pytesseract are not needed on Vercel).
+fastapi==0.165.0
+python-multipart==0.0.34
+PyMuPDF==1.26.7
+python-pptx==1.0.2
+Pillow==13.0.0
+pydantic==2.14.4
+pydantic-settings==2.16.3
+SQLAlchemy==2.1.9
+httpx==0.28.1
+lxml==6.1.3
+psycopg[binary]==3.3.9
