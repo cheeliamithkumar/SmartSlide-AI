@@ -5,13 +5,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_db
 from app.models import Document
 from app.schemas import DocumentOut, ExtractionResult
-from app.services import storage
+from app.services import blob, storage
 from app.services.cleanup import delete_document_files
 from app.services.pdf_extractor import PDFValidationError, inspect_pdf, validate_pdf_bytes
 from app.utils.files import safe_filename
@@ -41,16 +42,9 @@ async def _read_limited(file: UploadFile, limit: int) -> bytes:
     return bytes(buf)
 
 
-@router.post("", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
-async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def _ingest(data: bytes, name: str, db: Session) -> Document:
+    """Validate, store and inspect PDF bytes; create the Document row."""
     settings = get_settings()
-    name = safe_filename(file.filename)
-    if not name.lower().endswith(".pdf"):
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Only PDF files are supported.")
-    if (file.content_type or "") not in ALLOWED_TYPES:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Only PDF files are supported.")
-
-    data = await _read_limited(file, settings.max_upload_bytes)
     try:
         await run_in_threadpool(validate_pdf_bytes, data)
     except PDFValidationError as exc:
@@ -81,6 +75,66 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     db.commit()
     db.refresh(doc)
     return doc
+
+
+def _check_name(filename: str | None) -> str:
+    name = safe_filename(filename)
+    if not name.lower().endswith(".pdf"):
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Only PDF files are supported.")
+    return name
+
+
+@router.post("", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
+async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    settings = get_settings()
+    name = _check_name(file.filename)
+    if (file.content_type or "") not in ALLOWED_TYPES:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Only PDF files are supported.")
+    data = await _read_limited(file, settings.max_upload_bytes)
+    return await _ingest(data, name, db)
+
+
+class BlobUploadRequest(BaseModel):
+    filename: str = Field(min_length=1, max_length=255)
+    size: int = Field(gt=0)
+
+
+class BlobDocumentRequest(BaseModel):
+    url: str = Field(min_length=10, max_length=1000)
+    filename: str = Field(min_length=1, max_length=255)
+
+
+@router.post("/upload-token")
+def create_upload_token(payload: BlobUploadRequest):
+    """Issue a short-lived token so the browser can upload a large PDF directly to private storage."""
+    settings = get_settings()
+    if not blob.enabled():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Direct uploads are not enabled on this server.")
+    _check_name(payload.filename)
+    if payload.size > settings.max_upload_bytes:
+        raise HTTPException(413, f"File is too large. Maximum size is {settings.max_upload_mb} MB.")
+    pathname = f"uploads/{uuid.uuid4().hex}.pdf"
+    return {"token": blob.client_token(pathname, settings.max_upload_bytes), "pathname": pathname,
+            "access": "private"}
+
+
+@router.post("/from-blob", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
+async def create_from_blob(payload: BlobDocumentRequest, db: Session = Depends(get_db)):
+    """Import a PDF the browser uploaded to Vercel Blob; the temporary blob is deleted afterwards."""
+    settings = get_settings()
+    if not blob.enabled():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Direct uploads are not enabled on this server.")
+    name = _check_name(payload.filename)
+    if not blob.is_allowed_url(payload.url):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid upload reference.")
+    try:
+        data = await run_in_threadpool(blob.download, payload.url, settings.max_upload_bytes)
+    except blob.BlobError as exc:
+        code = 413 if "too large" in str(exc) else 400
+        raise HTTPException(code, str(exc)) from exc
+    finally:
+        await run_in_threadpool(blob.delete, payload.url)
+    return await _ingest(data, name, db)
 
 
 @router.get("/{document_id}", response_model=DocumentOut)

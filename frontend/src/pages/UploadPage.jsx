@@ -15,9 +15,16 @@ export default function UploadPage() {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState(null)
   const [limits, setLimits] = useState({ max_upload_mb: 25, max_pages: 300 })
+  const [directUpload, setDirectUpload] = useState(false)
 
   useEffect(() => {
-    api.health().then((h) => h.limits && setLimits(h.limits)).catch(() => {})
+    api
+      .health()
+      .then((h) => {
+        if (h.limits) setLimits(h.limits)
+        setDirectUpload(Boolean(h.direct_upload))
+      })
+      .catch(() => {})
   }, [])
 
   const choose = (f) => {
@@ -50,7 +57,7 @@ export default function UploadPage() {
     setError(null)
     setProgress(0)
     try {
-      const doc = await api.uploadDocument(file, setProgress)
+      const doc = await api.uploadDocument(file, setProgress, { directUpload })
       navigate(`/configure/${doc.id}`)
     } catch (err) {
       setError(errorMessage(err, 'Upload failed. Please try again.'))

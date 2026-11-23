@@ -29,17 +29,30 @@ Function instances do not share disk, so a shared database is required for relia
 
 `GET /api/health` reports `"persistent_database": true` once it is connected.
 
+## Large uploads: Vercel Blob
+
+Vercel functions accept request bodies of at most ~4.5 MB. To allow larger PDFs, connect a
+**private Blob store** (Storage → Create → Blob → Private → connect to the project). Vercel adds
+`BLOB_READ_WRITE_TOKEN`, and the app switches to direct uploads automatically:
+
+1. the browser asks `POST /api/documents/upload-token` for a short-lived token, restricted to one
+   path, PDF content and `MAX_UPLOAD_MB`;
+2. it uploads the file straight to private Blob storage (no size limit from the function);
+3. `POST /api/documents/from-blob` downloads it once, **deletes it**, and processes it.
+
+Only URLs from your own store's `uploads/` folder are accepted.
+
 ## Recommended environment variables
 
 | Variable | Value | Why |
 |----------|-------|-----|
-| `MAX_UPLOAD_MB` | `4` | Vercel limits request bodies to 4.5 MB |
+| `MAX_UPLOAD_MB` | `25` with Blob, otherwise `4` | Without Blob, Vercel limits request bodies to 4.5 MB |
 | `AI_PROVIDER` | `mock`, `claude` or `gemini` | AI engine |
 | `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | your key | Only if using that provider. Mark as *Sensitive* |
 
 ## Limitations on Vercel
 
-- Uploads are limited to ~4 MB (platform request limit). Self-host for larger files.
+- Without a Blob store, uploads are limited to ~4 MB (platform request limit).
 - Tesseract OCR is not available in Vercel functions, so scanned pages are reported as unreadable.
   Self-host (see INSTALLATION.md) for OCR.
 - Each conversion must finish within the function time limit (300 s); fine for demo mode and typical documents.

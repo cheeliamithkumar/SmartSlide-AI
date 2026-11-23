@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     database_url: str = ""
     # Vercel's Neon/Postgres integration exposes POSTGRES_URL; used when DATABASE_URL is empty.
     postgres_url: str = ""
+    # Vercel Blob (enables direct browser uploads larger than the 4.5 MB function limit)
+    blob_read_write_token: str = ""
 
     # --- Execution mode ------------------------------------------------------
     # Serverless platforms (e.g. Vercel) have no persistent disk or background threads:

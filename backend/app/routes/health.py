@@ -20,6 +20,7 @@ def health():
         "ocr_available": s.ocr_enabled and tesseract_available(),
         "serverless": s.serverless,
         "persistent_database": s.persistent_database,
+        "direct_upload": bool(s.blob_read_write_token),
         "limits": {"max_upload_mb": s.max_upload_mb, "max_pages": s.max_pages},
     }
 

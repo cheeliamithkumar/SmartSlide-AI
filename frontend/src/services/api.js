@@ -23,7 +23,30 @@ export const api = {
   health: () => http.get('/health').then((r) => r.data),
   templates: () => http.get('/templates').then((r) => r.data),
 
-  uploadDocument: (file, onProgress) => {
+  /**
+   * Upload a PDF. When the server supports direct uploads (Vercel Blob), the file goes
+   * straight from the browser to private storage, which bypasses the ~4.5 MB request limit
+   * of serverless functions. Otherwise it is posted to the API as multipart form data.
+   */
+  uploadDocument: async (file, onProgress, { directUpload = false } = {}) => {
+    if (directUpload) {
+      const { token, pathname } = await http
+        .post('/documents/upload-token', { filename: file.name, size: file.size })
+        .then((r) => r.data)
+      const { put } = await import('@vercel/blob/client')
+      const blob = await put(pathname, file, {
+        access: 'private',
+        token,
+        contentType: 'application/pdf',
+        addRandomSuffix: true,
+        multipart: file.size > 8 * 1024 * 1024,
+        onUploadProgress: ({ percentage }) => onProgress?.(Math.min(99, Math.round(percentage))),
+      })
+      onProgress?.(100)
+      return http
+        .post('/documents/from-blob', { url: blob.url, filename: file.name }, { timeout: 180000 })
+        .then((r) => r.data)
+    }
     const form = new FormData()
     form.append('file', file)
     return http
