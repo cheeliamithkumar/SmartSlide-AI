@@ -1,5 +1,7 @@
 # SmartSlide AI: PDF to Smart PowerPoint Converter
 
+**🚀 Live demo: https://smartslide-ai-amith25.vercel.app**
+
 SmartSlide AI turns educational PDFs (lecture notes, textbook chapters, study guides) into clean,
 **fully editable** PowerPoint presentations. From one upload it generates two decks:
 
