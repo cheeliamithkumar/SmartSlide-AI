@@ -138,7 +138,8 @@ def test_delete_and_reorder_slides(client, completed_job):
 def test_update_presentation_template_and_full_slide_list(client, completed_job):
     pres = _pres(client, completed_job, "summary")
     slides = pres["slides"]
-    slides[1]["bullets"] = ["Replaced via full update"]
+    first_content = next(i for i, s in enumerate(slides) if s["type"] == "content")
+    slides[first_content]["bullets"] = ["Replaced via full update"]
     r = client.patch(f"/api/presentations/{pres['id']}", json={"template": "dark_academic", "slides": slides})
     assert r.status_code == 200
     assert r.json()["template"] == "dark_academic"

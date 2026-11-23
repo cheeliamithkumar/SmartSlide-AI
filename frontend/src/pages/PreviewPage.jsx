@@ -11,7 +11,7 @@ import { Alert, Button, PageLoader } from '../components/ui'
 import { useTemplates } from '../hooks/useTemplates'
 import { api, errorMessage } from '../services/api'
 
-const EDITABLE = ['type', 'title', 'subtitle', 'bullets', 'definitions', 'steps', 'comparison', 'notes']
+const EDITABLE = ['type', 'title', 'subtitle', 'bullets', 'definitions', 'steps', 'comparison', 'diagram', 'notes']
 
 function toPayload(slide) {
   const p = {}
@@ -21,6 +21,15 @@ function toPayload(slide) {
   p.definitions = (p.definitions || []).filter((d) => d.term.trim() && d.definition.trim())
   if (p.comparison) {
     p.comparison = { ...p.comparison, left: p.comparison.left.filter((x) => x.trim()), right: p.comparison.right.filter((x) => x.trim()) }
+  }
+  if (p.diagram) {
+    p.diagram = {
+      ...p.diagram,
+      center: p.diagram.center?.trim() || null,
+      nodes: (p.diagram.nodes || [])
+        .filter((n) => n.label?.trim())
+        .map((n) => ({ label: n.label.trim(), detail: n.detail?.trim() || null })),
+    }
   }
   if (!p.title?.trim()) p.title = 'Untitled'
   return p

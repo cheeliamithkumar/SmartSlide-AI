@@ -78,10 +78,197 @@ function Badge({ n, c }) {
   )
 }
 
+// ---------------------------------------------------------------------------
+// Diagrams (mirror pptx_builder.py). Coordinates are in points on a 960x540 slide.
+// ---------------------------------------------------------------------------
+const PT_W = 960
+const PT_H = 540
+
+function Lines({ lines, color, width = 2, arrow = false }) {
+  const id = `ah-${color}`
+  return (
+    <svg viewBox={`0 0 ${PT_W} ${PT_H}`} preserveAspectRatio="none" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
+      {arrow && (
+        <defs>
+          <marker id={id} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill={hex(color)} />
+          </marker>
+        </defs>
+      )}
+      {lines.map(([x1, y1, x2, y2], i) => (
+        <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={hex(color)} strokeWidth={width} markerEnd={arrow ? `url(#${id})` : undefined} />
+      ))}
+    </svg>
+  )
+}
+
+function Box({ x, y, w, h, children, style }) {
+  return (
+    <div style={{ position: 'absolute', left: u(x), top: u(y), width: u(w), height: u(h), display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', boxSizing: 'border-box', ...style }}>
+      {children}
+    </div>
+  )
+}
+
+const fitPt = (text, max, min, boxW) => {
+  const longest = Math.max(1, ...String(text).split(/\s+/).map((w) => w.length))
+  for (let s = max; s >= min; s--) {
+    const cpl = boxW / (s * 0.62)
+    if (longest <= cpl && Math.ceil((text.length * 1.1) / cpl) <= 2) return s
+  }
+  return min
+}
+
+function MindMap({ diag, c, font, x = 47, y = 122, w = 866, h = 367 }) {
+  const nodes = (diag.nodes || []).slice(0, 6)
+  const n = Math.max(1, nodes.length)
+  const cx = x + w / 2
+  const cy = y + h / 2
+  const cw = w * 0.27
+  const ch = h * 0.22
+  const nw = w * 0.23
+  const nh = h * 0.17
+  const rx = (w - nw) / 2
+  const ry = (h - nh) / 2
+  const pos = nodes.map((_, i) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / n
+    return [cx + rx * Math.cos(a), cy + ry * Math.sin(a)]
+  })
+  const lineColor = c.border
+  return (
+    <>
+      <Lines lines={pos.map(([px, py]) => [cx, cy, px, py])} color={lineColor} />
+      <Box x={cx - cw / 2} y={cy - ch / 2} w={cw} h={ch} style={{ background: hex(c.primary), color: hex(c.on_primary), borderRadius: '50%', fontWeight: 700, fontFamily: font, fontSize: u(fitPt(diag.center || '', 20, 11, cw * 0.72)), padding: u(8), lineHeight: 1.15 }}>
+        {diag.center}
+      </Box>
+      {nodes.map((nd, i) => (
+        <Box key={i} x={pos[i][0] - nw / 2} y={pos[i][1] - nh / 2} w={nw} h={nh} style={{ background: hex(c.surface), border: `1.5px solid ${hex(c.primary)}`, borderRadius: u(10), color: hex(c.text), fontWeight: 700, fontSize: u(fitPt(nd.label, 15, 9, nw - 16)), padding: u(6), lineHeight: 1.2 }}>
+          {nd.label}
+        </Box>
+      ))}
+    </>
+  )
+}
+
+function ConceptTree({ diag, c, font, x = 544, y = 119, w = 371, h = 367 }) {
+  const nodes = (diag.nodes || []).slice(0, 6)
+  const rows = Math.ceil(nodes.length / 2)
+  const topH = 72
+  const cw = w * 0.78
+  const busY = y + 7 + topH + 22
+  const gap = 18
+  const nw = (w - gap) / 2
+  const avail = y + h - busY - 18
+  const nh = Math.min(68, (avail - 16 * (rows - 1)) / Math.max(rows, 1))
+  const colX = [x + nw / 2, x + nw + gap + nw / 2]
+  const lines = [[x + w / 2, y + 7 + topH, x + w / 2, busY], [colX[0], busY, nodes.length > 1 ? colX[1] : colX[0], busY]]
+  const placed = nodes.map((nd, i) => {
+    const r = Math.floor(i / 2)
+    const col = i % 2
+    const ny = busY + 18 + r * (nh + 16)
+    lines.push([colX[col], r === 0 ? busY : ny - 16, colX[col], ny])
+    return { nd, x: colX[col] - nw / 2, y: ny }
+  })
+  return (
+    <>
+      <Lines lines={lines} color={c.border} />
+      <Box x={x + (w - cw) / 2} y={y + 7} w={cw} h={topH} style={{ background: hex(c.primary), color: hex(c.on_primary), borderRadius: u(12), fontWeight: 700, fontFamily: font, fontSize: u(fitPt(diag.center || '', 18, 11, cw - 22)), padding: u(8) }}>
+        {diag.center}
+      </Box>
+      {placed.map((p, i) => (
+        <Box key={i} x={p.x} y={p.y} w={nw} h={nh} style={{ background: hex(c.surface), border: `1.5px solid ${hex(c.primary)}`, borderRadius: u(10), color: hex(c.text), fontWeight: 700, fontSize: u(fitPt(p.nd.label, 15, 10, nw - 22)), padding: u(6) }}>
+          {p.nd.label}
+        </Box>
+      ))}
+    </>
+  )
+}
+
+function Timeline({ diag, c, font, x = 47, y = 147, w = 866, h = 342 }) {
+  const nodes = (diag.nodes || []).slice(0, 7)
+  const n = Math.max(1, nodes.length)
+  const slot = w / n
+  const lineY = y + h * 0.42
+  const cardW = slot - 13
+  const r = 19
+  return (
+    <>
+      <div style={{ position: 'absolute', left: u(x + slot / 2), top: u(lineY - 2), width: u(slot * (n - 1)), height: u(4), background: hex(c.accent) }} />
+      {nodes.map((nd, i) => {
+        const cx = x + slot * i + slot / 2
+        return (
+          <div key={i}>
+            <Box x={cx - cardW / 2} y={y + 11} w={cardW} h={lineY - y - 47} style={{ background: hex(c.surface), border: `1px solid ${hex(c.border)}`, borderRadius: u(12), color: hex(c.text), fontWeight: 700, fontFamily: font, fontSize: u(fitPt(nd.label, 15, 9, cardW - 18)), padding: u(6), lineHeight: 1.2 }}>
+              {nd.label}
+            </Box>
+            <div style={{ position: 'absolute', left: u(cx - 0.6), top: u(lineY - 36), width: u(1.2), height: u(36 - r), background: hex(c.border) }} />
+            <Box x={cx - r} y={lineY - r} w={2 * r} h={2 * r} style={{ background: hex(c.primary), color: hex(c.on_primary), borderRadius: '50%', fontWeight: 700, fontSize: u(13) }}>
+              {i + 1}
+            </Box>
+            {nd.detail && (
+              <div style={{ position: 'absolute', left: u(cx - cardW / 2), top: u(lineY + r + 11), width: u(cardW), color: hex(c.muted), fontSize: u(11), textAlign: 'center', lineHeight: 1.3 }}>
+                {nd.detail}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </>
+  )
+}
+
+function Cycle({ steps, c, x = 47, y = 119, w = 866, h = 371 }) {
+  const n = steps.length
+  const cx = x + w / 2
+  const cy = y + h / 2
+  const nw = 252
+  const nh = 94
+  const rx = ((w - nw) / 2) * 0.86
+  const ry = (h - nh) / 2
+  const pos = steps.map((_, i) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / n
+    return [cx + rx * Math.cos(a), cy + ry * Math.sin(a)]
+  })
+  const arrows = pos.map(([x1, y1], i) => {
+    const [x2, y2] = pos[(i + 1) % n]
+    const dx = x2 - x1
+    const dy = y2 - y1
+    const dist = Math.hypot(dx, dy) || 1
+    const ux = dx / dist
+    const uy = dy / dist
+    const trim = Math.min(ux ? Math.abs(nw / 2 / ux) : Infinity, uy ? Math.abs(nh / 2 / uy) : Infinity) + 6
+    return [x1 + ux * trim, y1 + uy * trim, x2 - ux * trim, y2 - uy * trim]
+  })
+  return (
+    <>
+      <Lines lines={arrows} color={c.accent} width={2.5} arrow />
+      <Box x={cx - 68} y={cy - 36} w={137} h={72} style={{ background: hex(c.surface), border: `1px solid ${hex(c.border)}`, borderRadius: '50%', color: hex(c.primary), fontWeight: 700, fontSize: u(13) }}>
+        ↻ Repeats
+      </Box>
+      {steps.map((st, i) => (
+        <Box key={i} x={pos[i][0] - nw / 2} y={pos[i][1] - nh / 2} w={nw} h={nh} style={{ background: hex(c.surface), border: `1.5px solid ${hex(c.primary)}`, borderRadius: u(14), justifyContent: 'flex-start', textAlign: 'left', gap: u(10), padding: `0 ${u(10)}` }}>
+          <Badge n={i + 1} c={c} />
+          <span style={{ color: hex(c.text), fontSize: u(st.length > 90 ? 11 : 13), lineHeight: 1.3 }}>{st}</span>
+        </Box>
+      ))}
+    </>
+  )
+}
+
 const BODY = { position: 'absolute', left: u(47), right: u(47), top: u(125), bottom: u(45) }
 
-function ContentBody({ slide, c }) {
+function ContentBody({ slide, c, font }) {
   const items = slide.bullets || []
+  if (slide.diagram?.kind === 'mindmap' && slide.diagram.nodes?.length) {
+    return (
+      <>
+        <div style={{ ...BODY, right: 'auto', width: u(475) }}>
+          <Bullets items={items} c={c} size={items.join(' ').length > 500 ? 14 : 17} />
+        </div>
+        <ConceptTree diag={slide.diagram} c={c} font={font} />
+      </>
+    )
+  }
   if (items.length >= 2 && items.length <= 3 && items.every((b) => b.length <= 130)) {
     return (
       <div style={{ ...BODY, top: u(140), display: 'flex', gap: u(25), alignItems: 'flex-start' }}>
@@ -206,6 +393,16 @@ export default function SlideCanvas({ slide, index, total, template, docName = '
     case 'process': {
       const steps = (slide.steps?.length ? slide.steps : slide.bullets || []).slice(0, 6)
       const perRow = steps.length <= 4 ? steps.length : Math.ceil(steps.length / 2)
+      if (slide.diagram?.kind === 'cycle' && steps.length >= 3) {
+        body = (
+          <>
+            <Header title={slide.title} eyebrow="Cycle" c={c} font={font} />
+            <Cycle steps={steps} c={c} />
+            <Footer {...common} />
+          </>
+        )
+        break
+      }
       body = (
         <>
           <Header title={slide.title} eyebrow="Process" c={c} font={font} />
@@ -222,6 +419,21 @@ export default function SlideCanvas({ slide, index, total, template, docName = '
               </div>
             ))}
           </div>
+          <Footer {...common} />
+        </>
+      )
+      break
+    }
+    case 'diagram': {
+      const d = slide.diagram || { kind: 'mindmap', center: slide.title, nodes: [] }
+      const eyebrow = { timeline: 'Roadmap', mindmap: 'Concept map', cycle: 'Cycle', flow: 'Process' }[d.kind]
+      body = (
+        <>
+          <Header title={slide.title} eyebrow={eyebrow} c={c} font={font} />
+          {d.kind === 'timeline' && d.nodes?.length > 0 && <Timeline diag={d} c={c} font={font} />}
+          {d.kind === 'mindmap' && d.nodes?.length > 0 && <MindMap diag={d} c={c} font={font} />}
+          {d.kind === 'cycle' && d.nodes?.length >= 3 && <Cycle steps={d.nodes.map((nd) => nd.label)} c={c} />}
+          {!(d.nodes?.length) && slide.bullets?.length > 0 && <div style={BODY}><Bullets items={slide.bullets} c={c} /></div>}
           <Footer {...common} />
         </>
       )
@@ -272,7 +484,7 @@ export default function SlideCanvas({ slide, index, total, template, docName = '
       body = (
         <>
           <Header title={slide.title} eyebrow="Examples" c={c} font={font} />
-          <ContentBody slide={slide} c={c} />
+          <ContentBody slide={slide} c={c} font={font} />
           <Footer {...common} />
         </>
       )
@@ -281,7 +493,7 @@ export default function SlideCanvas({ slide, index, total, template, docName = '
       body = (
         <>
           <Header title={slide.title} c={c} font={font} />
-          <ContentBody slide={slide} c={c} />
+          <ContentBody slide={slide} c={c} font={font} />
           <Footer {...common} />
         </>
       )

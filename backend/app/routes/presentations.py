@@ -153,6 +153,8 @@ async def regenerate_slide(pres_id: str, slide_id: str, db: Session = Depends(ge
     except AIProviderError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"AI provider unavailable: {exc}") from exc
     new.id, new.type, new.source_pages = slide.id, slide.type, slide.source_pages
+    if new.diagram is None:
+        new.diagram = slide.diagram  # keep the slide's visual when the AI rewrites the text
     slides[i] = new
     _save(pres, slides, db)
     return new

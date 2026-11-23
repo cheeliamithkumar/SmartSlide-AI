@@ -9,15 +9,19 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from collections import Counter
+
 from app.schemas import (
     Comparison,
     Definition,
+    Diagram,
+    DiagramNode,
     DocumentOverview,
     Slide,
     SlideType,
     Topic,
 )
-from app.utils.text import shorten
+from app.utils.text import STOPWORDS, shorten, title_case, tokens
 
 MAX_BULLETS = 5
 MAX_DEFS_PER_SLIDE = 3
@@ -77,6 +81,89 @@ _FRAMING = re.compile(r"^(introduction|overview|summary|conclusions?|review|reca
 
 def _is_framing(title: str) -> bool:
     return bool(_FRAMING.match(title.strip()))
+
+
+_CYCLE = re.compile(r"\b(cycle|cyclic|loop|recycl\w*|regenerat\w*|repeat\w*|continu\w* again)\b", re.I)
+
+
+def short_label(text: str, max_words: int = 5, max_chars: int = 38) -> str:
+    """Compact label for a diagram node."""
+    s = re.sub(r"\s*[:–—(].*$", "", text).strip() or text
+    words = s.split()
+    if len(words) > max_words:
+        s = " ".join(words[:max_words]) + "…"
+    return s if len(s) <= max_chars else s[: max_chars - 1].rstrip() + "…"
+
+
+def key_terms(t: Topic, n: int = 5) -> list[str]:
+    """Key terms of a topic for concept maps: defined terms first, then frequent phrases."""
+    terms: list[str] = []
+    title_norm = _norm(t.title)
+    for d in t.definitions:
+        k = _norm(d.term)
+        if len(d.term.split()) <= 4 and k not in {_norm(x) for x in terms} and k not in title_norm:
+            terms.append(d.term)
+    title_toks = set(tokens(t.title))
+    # count over distinct source sentences only (simplified points repeat the key points)
+    texts = [k.text for k in t.key_points] or t.simplified_points
+    uni: Counter[str] = Counter()
+    bi: Counter[str] = Counter()
+    for text in texts:
+        words = re.findall(r"[A-Za-z][A-Za-z0-9\-]+", text)
+        low = [w.lower() for w in words]
+        for i, w in enumerate(low):
+            if w in STOPWORDS or len(w) < 4 or w in title_toks:
+                continue
+            uni[w] += 1
+            if i + 1 < len(low) and low[i + 1] not in STOPWORDS and len(low[i + 1]) >= 3:
+                bi[f"{w} {low[i + 1]}"] += 1
+    ranked = [(p, c * 1.6) for p, c in bi.items() if c >= 2] + [(w, float(c)) for w, c in uni.items() if c >= 2]
+    ranked.sort(key=lambda x: -x[1])
+    for phrase, _ in ranked:
+        if len(terms) >= n:
+            break
+        if any(phrase in _norm(x) or _norm(x) in phrase for x in terms):
+            continue
+        terms.append(title_case(phrase) if phrase.islower() else phrase)
+    return terms[:n]
+
+
+def _mindmap(center: str, labels: list[str]) -> Diagram:
+    return Diagram(kind="mindmap", center=short_label(center, 6, 48),
+                   nodes=[DiagramNode(label=short_label(x)) for x in labels[:6]])
+
+
+def _roadmap(title: str, topics: list[Topic], priority: float, max_nodes: int = 6) -> _Candidate | None:
+    core = [t for t in topics if not _is_framing(t.title)] or topics
+    if len(core) < 3:
+        return None
+    if len(core) > max_nodes:  # keep the most important, in document order
+        keep = sorted(sorted(range(len(core)), key=lambda i: -core[i].importance)[:max_nodes])
+        core = [core[i] for i in keep]
+    nodes = [DiagramNode(label=short_label(t.title),
+                         detail=shorten(t.key_takeaway or (t.simplified_points or [t.summary or ""])[0], 80) or None)
+             for t in core]
+    return _Candidate(Slide(
+        type=SlideType.diagram, title=title, diagram=Diagram(kind="timeline", nodes=nodes),
+        source_pages=_pages(*[t.pages for t in core]),
+        notes="Roadmap of the main topics, in the order they are covered: " + " → ".join(t.title for t in core),
+        visual_suggestion="Timeline of topics",
+    ), priority)
+
+
+def _big_picture(overview: DocumentOverview, topics: list[Topic], priority: float) -> _Candidate | None:
+    core = [t for t in topics if not _is_framing(t.title)] or topics
+    if len(core) < 3:
+        return None
+    core = sorted(core, key=lambda t: -t.importance)[:6]
+    core = [t for t in topics if t in core]
+    return _Candidate(Slide(
+        type=SlideType.diagram, title="The Big Picture",
+        diagram=_mindmap(overview.title, [t.title for t in core]),
+        source_pages=_pages(*[t.pages for t in core]),
+        notes="How the main topics connect to the central theme: " + ", ".join(t.title for t in core),
+        visual_suggestion="Concept map of the main topics",
+    ), priority)
 
 
 @dataclass
@@ -139,9 +226,11 @@ def _process_slide(t: Topic, priority: float, group=None) -> _Candidate | None:
     steps = _dedupe(t.process_steps)[:MAX_STEPS]
     if len(steps) < 3:
         return None
+    is_cycle = bool(_CYCLE.search(t.title) or _CYCLE.search(" ".join(steps[-2:])))
     return _Candidate(Slide(
         type=SlideType.process, title=f"{t.title}: Process" if "process" not in t.title.lower() else t.title,
         steps=[shorten(s, 110) for s in steps], source_pages=t.pages,
+        diagram=Diagram(kind="cycle" if is_cycle else "flow"),
         notes="Walk through each step in order. " + " → ".join(steps),
         visual_suggestion=t.visual_suggestion or "Flowchart of the steps",
     ), priority, group)
@@ -169,7 +258,10 @@ def _comparison_slide(t: Topic, priority: float, group=None) -> _Candidate | Non
 def build_summary(topics: list[Topic], overview: DocumentOverview, doc_name: str,
                   target: int = 12, include_notes: bool = True) -> list[Slide]:
     cands: list[_Candidate] = [_Candidate(_title_slide(overview, "summary", doc_name), 1000)]
-    if overview.overview:
+    roadmap = _roadmap("Topic Roadmap", topics, 900)
+    if roadmap:
+        cands.append(roadmap)
+    elif overview.overview:
         cands.append(_Candidate(Slide(
             type=SlideType.content, title="What This Presentation Covers",
             bullets=[shorten(b, 120) for b in overview.overview[:MAX_BULLETS]],
@@ -191,9 +283,11 @@ def build_summary(topics: list[Topic], overview: DocumentOverview, doc_name: str
             special.slide.notes = "\n".join(filter(None, [notes, "Key points: " + " ".join(bullets)]))
             cands.append(special)
         else:
+            terms = key_terms(t)
+            diagram = _mindmap(t.title, terms) if len(terms) >= 3 else None
             cands.append(_Candidate(Slide(
-                type=SlideType.content, title=t.title, bullets=bullets, source_pages=t.pages,
-                notes=notes, visual_suggestion=t.visual_suggestion,
+                type=SlideType.content, title=t.title, bullets=bullets[:4] if diagram else bullets,
+                source_pages=t.pages, notes=notes, visual_suggestion=t.visual_suggestion, diagram=diagram,
             ), base))
         # optional second view of important topics (only used when budget allows)
         shown = {_norm(b)[:60] for b in bullets}
@@ -212,6 +306,9 @@ def build_summary(topics: list[Topic], overview: DocumentOverview, doc_name: str
         # place glossary after topics
         defs = sorted(all_defs[:6], key=lambda d: d.pages[0] if d.pages else 0)
         cands += _definition_slides(defs, "Important Definitions", 170, max_slides=2, summary=True)
+
+    if (bp := _big_picture(overview, topics, 175)):
+        cands.append(bp)
 
     if overview.key_takeaways:
         cands.append(_Candidate(Slide(
@@ -254,9 +351,13 @@ def build_detailed(topics: list[Topic], overview: DocumentOverview, doc_name: st
     cands: list[_Candidate] = [_Candidate(_title_slide(overview, "detailed", doc_name), 1000)]
     agenda = [_section_title(g) for g in groups]
     if len(groups) > 1:
+        nodes = [DiagramNode(label=short_label(a),
+                             detail=shorten(" • ".join(t.title for t in g if t.title != a), 80) or None)
+                 for a, g in zip(agenda[:7], groups)]
         cands.append(_Candidate(Slide(
-            type=SlideType.content, title="Agenda", bullets=[shorten(a, 90) for a in agenda[:7]],
-            notes="Roadmap of the sections in this presentation.",
+            type=SlideType.diagram, title="Agenda", diagram=Diagram(kind="timeline", nodes=nodes),
+            bullets=[shorten(a, 90) for a in agenda[:7]],
+            notes="Roadmap of the sections in this presentation: " + " → ".join(agenda),
         ), 900))
     if overview.overview and not (topics and _is_framing(topics[0].title)):
         cands.append(_Candidate(Slide(
@@ -281,15 +382,21 @@ def build_detailed(topics: list[Topic], overview: DocumentOverview, doc_name: st
             point_pages = {k.text: k.pages for k in t.key_points}
             if not points:
                 points = _dedupe(t.simplified_points)
-            parts = _chunks(points, MAX_BULLETS)
+            terms = key_terms(t)
+            first = [shorten(b, 200) for b in points[:4]]
+            diagram = _mindmap(t.title, terms) if len(terms) >= 3 and sum(map(len, first)) <= 720 else None
+            # with a concept map the first slide carries 4 points, the rest continue on later slides
+            parts = ([points[:4]] + _chunks(points[4:], MAX_BULLETS)) if diagram else _chunks(points, MAX_BULLETS)
             for pi, part in enumerate(parts[:3]):
                 title = t.title if pi == 0 else f"{t.title} (cont.)"
+                with_map = diagram is not None and pi == 0
                 cands.append(_Candidate(Slide(
                     type=SlideType.content, title=title,
-                    bullets=[shorten(b, 240) for b in part],
+                    bullets=[shorten(b, 200 if with_map else 240) for b in part],
                     source_pages=_pages(*[point_pages.get(b, t.pages) for b in part]) or t.pages,
                     notes=(t.summary if include_notes else None),
                     visual_suggestion=t.visual_suggestion if pi == 0 else None,
+                    diagram=diagram if with_map else None,
                 ), (200 + imp * 15 if pi == 0 else 80 + imp * 8 - pi * 10) - order * 0.01, gi))
             if (p := _process_slide(t, 205 + imp * 5, gi)):
                 cands.append(p)
@@ -309,6 +416,8 @@ def build_detailed(topics: list[Topic], overview: DocumentOverview, doc_name: st
                 cand.priority = 190 + 4 * len(cand.slide.definitions) - k * 25
                 cands.append(cand)
 
+    if (bp := _big_picture(overview, topics, 330)):
+        cands.append(bp)
     if overview.key_takeaways:
         cands.append(_Candidate(Slide(
             type=SlideType.takeaways, title="Key Takeaways",

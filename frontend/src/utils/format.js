@@ -38,4 +38,5 @@ export const SLIDE_TYPE_LABELS = {
   example: 'Examples',
   takeaways: 'Key takeaways',
   conclusion: 'Conclusion',
+  diagram: 'Diagram',
 }

@@ -11,12 +11,12 @@ from pathlib import Path
 from lxml import etree
 from pptx import Presentation as PptxPresentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
-from app.schemas import Slide, SlideType
+from app.schemas import Diagram, Slide, SlideType
 from app.services.templates import Theme, get_theme
 
 SLIDE_W = Inches(13.333)
@@ -236,6 +236,13 @@ class DeckBuilder:
         self._bg(s, t.background)
         self._header(s, d.title)
         items = d.bullets or ([d.subtitle] if d.subtitle else [])
+        if d.diagram and d.diagram.kind == "mindmap" and d.diagram.nodes:
+            # bullets on the left, editable concept map on the right
+            if items:
+                self._bullets(s, MARGIN, CONTENT_TOP + Inches(0.1), Inches(6.6), Inches(5.0), items, max_pt=20)
+            self._draw_mindmap(s, d.diagram, Inches(7.55), CONTENT_TOP, Inches(5.15), Inches(5.1), compact=True)
+            self._footer(s, idx, d.source_pages)
+            return
         short = len(items) in (2, 3) and all(len(b) <= 130 for b in items)
         if short:
             self._cards(s, items, numbered=True)
@@ -333,10 +340,15 @@ class DeckBuilder:
     def _process_slide(self, s, d: Slide, idx):
         t = self.theme
         self._bg(s, t.background)
-        self._header(s, d.title, eyebrow="Process")
         steps = d.steps[:6] or d.bullets[:6]
+        is_cycle = bool(d.diagram and d.diagram.kind == "cycle")
+        self._header(s, d.title, eyebrow="Cycle" if is_cycle else "Process")
         n = len(steps)
         if n == 0:
+            self._footer(s, idx, d.source_pages)
+            return
+        if is_cycle and n >= 3:
+            self._draw_cycle(s, steps, MARGIN, CONTENT_TOP, SLIDE_W - 2 * MARGIN, Inches(5.15))
             self._footer(s, idx, d.source_pages)
             return
         per_row = n if n <= 4 else math.ceil(n / 2)
@@ -422,6 +434,174 @@ class DeckBuilder:
                    bold=True, font=t.heading_font)
         self._footer(s, idx, d.source_pages, dark=dark)
 
+    # ------------------------------------------------------------------ diagrams
+    def _line(self, s, x1, y1, x2, y2, color: str, width_pt: float = 1.75, arrow: bool = False):
+        ln = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, int(x1), int(y1), int(x2), int(y2))
+        ln.line.color.rgb = _rgb(color)
+        ln.line.width = Pt(width_pt)
+        if arrow:
+            ln_el = ln.line._get_or_add_ln()
+            tail = etree.SubElement(ln_el, qn("a:tailEnd"))
+            tail.set("type", "triangle")
+            tail.set("w", "med")
+            tail.set("h", "med")
+        return ln
+
+    def _node(self, s, x, y, w, h, text, size, fill, fg, line=None, bold=False, shape=MSO_SHAPE.ROUNDED_RECTANGLE,
+              font=None):
+        shp = self._rect(s, int(x), int(y), int(w), int(h), fill, shape, line=line,
+                         radius=0.25 if shape == MSO_SHAPE.ROUNDED_RECTANGLE else None)
+        self._shape_text(shp, text, size, fg, bold=bold, font=font)
+        tf = shp.text_frame
+        tf.margin_left = tf.margin_right = Inches(0.08)
+        tf.margin_top = tf.margin_bottom = Inches(0.04)
+        return shp
+
+    def _label_size(self, text: str, box_w_in: float, max_pt: int = 16, min_pt: int = 10, lines: int = 2,
+                    heading: bool = False) -> int:
+        longest = max((len(w) for w in text.split()), default=1)
+        font = self.theme.heading_font if heading else self.theme.body_font
+        factor = 0.7 if font in ("Georgia", "Trebuchet MS", "Segoe UI", "Arial") else 0.62
+        for size in range(max_pt, min_pt - 1, -1):
+            char_w = size * factor / 72  # generous average glyph width (inches) for bold labels
+            cpl = max(4, box_w_in / char_w)
+            if longest <= cpl and math.ceil(len(text) * 1.1 / cpl) <= lines:
+                return size
+        return min_pt
+
+    def _draw_mindmap(self, s, diag: Diagram, x, y, w, h, compact: bool = False):
+        """Centre concept with related nodes on an ellipse, joined by connectors."""
+        t = self.theme
+        nodes = diag.nodes[:6]
+        n = max(1, len(nodes))
+        if compact:
+            self._draw_concept_tree(s, diag, x, y, w, h)
+            return
+        cx, cy = x + w / 2, y + h / 2
+        cw, ch = (w * 0.38, h * 0.22) if compact else (w * 0.27, h * 0.22)
+        nw, nh = (w * 0.36, h * 0.15) if compact else (w * 0.23, h * 0.17)
+        rx, ry = (w - nw) / 2, (h - nh) / 2
+        pos = []
+        for i in range(n):
+            ang = -math.pi / 2 + 2 * math.pi * i / n
+            pos.append((cx + rx * math.cos(ang), cy + ry * math.sin(ang)))
+        for px, py in pos:  # connectors first so they sit behind the shapes
+            self._line(s, cx, cy, px, py, t.border if t.id != "dark_academic" else t.muted, 2.0)
+        center = diag.center or "Topic"
+        csize = self._label_size(center, Emu(int(cw)).inches * 0.72, 20, 11, 2, heading=True)
+        self._node(s, cx - cw / 2, cy - ch / 2, cw, ch, center, csize, t.primary, t.on_primary, bold=True,
+                   shape=MSO_SHAPE.OVAL, font=t.heading_font)
+        for node, (px, py) in zip(nodes, pos):
+            label = node.label if not node.detail or compact else f"{node.label}"
+            size = self._label_size(label, Emu(int(nw)).inches - 0.2, 15 if not compact else 13, 9, 2)
+            self._node(s, px - nw / 2, py - nh / 2, nw, nh, label, size, t.surface, t.text, line=t.primary, bold=True)
+
+    def _draw_concept_tree(self, s, diag: Diagram, x, y, w, h):
+        """Compact concept map for split layouts: topic on top, key terms in two columns below."""
+        t = self.theme
+        nodes = diag.nodes[:6]
+        rows = math.ceil(len(nodes) / 2)
+        top_h = Inches(1.0)
+        cw = w * 0.78
+        center = diag.center or "Topic"
+        csize = self._label_size(center, Emu(int(cw)).inches - 0.3, 18, 11, 2, heading=True)
+        self._node(s, x + (w - cw) / 2, y + Inches(0.1), cw, top_h, center, csize, t.primary, t.on_primary, bold=True,
+                   font=t.heading_font)
+        bus_y = y + Inches(0.1) + top_h + Inches(0.3)
+        line_c = t.border if t.id != "dark_academic" else t.muted
+        self._line(s, x + w / 2, y + Inches(0.1) + top_h, x + w / 2, bus_y, line_c, 2.0)
+        gap = Inches(0.25)
+        nw = (w - gap) / 2
+        avail = y + h - bus_y - Inches(0.25)
+        nh = min(Inches(0.95), (avail - Inches(0.22) * (rows - 1)) / max(rows, 1))
+        col_x = [x + nw / 2, x + nw + gap + nw / 2]
+        self._line(s, col_x[0], bus_y, col_x[1] if len(nodes) > 1 else col_x[0], bus_y, line_c, 2.0)
+        for i, node in enumerate(nodes):
+            r, c = divmod(i, 2)
+            ny = bus_y + Inches(0.25) + r * (nh + Inches(0.22))
+            if r == 0:
+                self._line(s, col_x[c], bus_y, col_x[c], ny, line_c, 2.0)
+            else:
+                self._line(s, col_x[c], ny - Inches(0.22), col_x[c], ny, line_c, 2.0)
+            size = self._label_size(node.label, Emu(int(nw)).inches - 0.3, 15, 10, 2)
+            self._node(s, col_x[c] - nw / 2, ny, nw, nh, node.label, size, t.surface, t.text, line=t.primary, bold=True)
+
+    def _draw_timeline(self, s, diag: Diagram, x, y, w, h):
+        """Numbered roadmap: label cards above a line, short descriptions below."""
+        t = self.theme
+        nodes = diag.nodes[:7]
+        n = max(1, len(nodes))
+        slot = w / n
+        y = y + Inches(0.35)
+        h = h - Inches(0.35)
+        line_y = y + h * 0.42
+        self._rect(s, int(x + slot / 2), int(line_y - Inches(0.03)), int(slot * (n - 1)) or 1, int(Inches(0.06)),
+                   t.accent)
+        r = Inches(0.27)
+        card_w = slot - Inches(0.18)
+        for i, node in enumerate(nodes):
+            cx = x + slot * i + slot / 2
+            size = self._label_size(node.label, Emu(int(card_w)).inches - 0.25, 15, 9, 3, heading=True)
+            self._node(s, cx - card_w / 2, y + Inches(0.15), card_w, line_y - y - Inches(0.65), node.label, size,
+                       t.surface, t.text, line=t.border, bold=True, font=t.heading_font)
+            self._line(s, cx, line_y - Inches(0.5), cx, line_y - r, t.border, 1.25)
+            badge = self._rect(s, int(cx - r), int(line_y - r), int(2 * r), int(2 * r), t.primary, MSO_SHAPE.OVAL)
+            self._shape_text(badge, str(i + 1), 13, t.on_primary, bold=True)
+            if node.detail:
+                dsize = self._label_size(node.detail, Emu(int(card_w)).inches - 0.1, 13, 9, 6)
+                self._text(s, int(cx - card_w / 2), int(line_y + r + Inches(0.15)), int(card_w),
+                           int(y + h - line_y - r - Inches(0.2)), node.detail, dsize, t.muted, align=PP_ALIGN.CENTER)
+
+    def _draw_cycle(self, s, steps: list[str], x, y, w, h):
+        """Steps arranged in a loop with arrows from each step to the next (last returns to first)."""
+        t = self.theme
+        n = len(steps)
+        cx, cy = x + w / 2, y + h / 2
+        nw, nh = Inches(3.5), Inches(1.3)
+        rx, ry = (w - nw) / 2 * 0.86, (h - nh) / 2
+        pos = [(cx + rx * math.cos(-math.pi / 2 + 2 * math.pi * i / n),
+                cy + ry * math.sin(-math.pi / 2 + 2 * math.pi * i / n)) for i in range(n)]
+        for i in range(n):  # arrows behind nodes, trimmed so the heads stay visible
+            (x1, y1), (x2, y2) = pos[i], pos[(i + 1) % n]
+            dx, dy = x2 - x1, y2 - y1
+            dist = math.hypot(dx, dy) or 1
+            ux, uy = dx / dist, dy / dist
+            tx = abs(nw / 2 / ux) if ux else float("inf")
+            ty = abs(nh / 2 / uy) if uy else float("inf")
+            trim = min(tx, ty) + Inches(0.08)
+            if dist > 2 * trim:
+                self._line(s, x1 + ux * trim, y1 + uy * trim, x2 - ux * trim, y2 - uy * trim, t.accent, 2.5, arrow=True)
+        hub = self._rect(s, int(cx - Inches(0.95)), int(cy - Inches(0.5)), int(Inches(1.9)), int(Inches(1.0)),
+                         t.surface, MSO_SHAPE.OVAL, line=t.border)
+        self._shape_text(hub, "↻ Repeats", 13, t.primary, bold=True)
+        size = min(self._label_size(st, Emu(int(nw)).inches - 0.8, 15, 10, 4) for st in steps)
+        for i, (step, (px, py)) in enumerate(zip(steps, pos)):
+            card = self._rect(s, int(px - nw / 2), int(py - nh / 2), int(nw), int(nh), t.surface,
+                              MSO_SHAPE.ROUNDED_RECTANGLE, line=t.primary, radius=0.2)
+            badge = self._rect(s, int(px - nw / 2 + Inches(0.12)), int(py - Inches(0.22)), int(Inches(0.44)),
+                               int(Inches(0.44)), t.primary, MSO_SHAPE.OVAL)
+            self._shape_text(badge, str(i + 1), 12, t.on_primary, bold=True)
+            self._text(s, int(px - nw / 2 + Inches(0.62)), int(py - nh / 2), int(nw - Inches(0.7)), int(nh), step,
+                       size, t.text, anchor=MSO_ANCHOR.MIDDLE)
+            card.name = f"Step {i + 1}"
+
+    def _diagram_slide(self, s, d: Slide, idx):
+        t = self.theme
+        self._bg(s, t.background)
+        diag = d.diagram or Diagram(kind="mindmap", center=d.title, nodes=[])
+        eyebrow = {"timeline": "Roadmap", "mindmap": "Concept map", "cycle": "Cycle", "flow": "Process"}[diag.kind]
+        self._header(s, d.title, eyebrow=eyebrow)
+        area = (MARGIN, CONTENT_TOP + Inches(0.05), SLIDE_W - 2 * MARGIN, Inches(5.1))
+        if diag.kind == "timeline" and diag.nodes:
+            self._draw_timeline(s, diag, *area)
+        elif diag.kind == "mindmap" and diag.nodes:
+            self._draw_mindmap(s, diag, *area)
+        elif diag.kind == "cycle" and len(diag.nodes) >= 3:
+            self._draw_cycle(s, [nd.label for nd in diag.nodes], *area)
+        elif d.bullets:
+            self._bullets(s, MARGIN, CONTENT_TOP + Inches(0.1), SLIDE_W - 2 * MARGIN, Inches(5.0), d.bullets)
+        self._footer(s, idx, d.source_pages)
+
     # ------------------------------------------------------------------ public
     def build(self, slides: list[Slide], output: Path) -> Path:
         self.total = len(slides)
@@ -445,6 +625,8 @@ class DeckBuilder:
                 self._takeaways_slide(s, d, i)
             elif d.type == SlideType.conclusion:
                 self._conclusion_slide(s, d, i)
+            elif d.type == SlideType.diagram:
+                self._diagram_slide(s, d, i)
             else:
                 self._content_slide(s, d, i)
             self._notes(s, d)

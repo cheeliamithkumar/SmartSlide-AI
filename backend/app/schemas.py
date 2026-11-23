@@ -22,6 +22,7 @@ class SlideType(str, Enum):
     example = "example"
     takeaways = "takeaways"
     conclusion = "conclusion"
+    diagram = "diagram"
 
 
 class Definition(BaseModel):
@@ -34,6 +35,25 @@ class Comparison(BaseModel):
     right_title: str = Field(default="B", max_length=120)
     left: list[str] = Field(default_factory=list)
     right: list[str] = Field(default_factory=list)
+
+
+class DiagramNode(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    detail: str | None = Field(default=None, max_length=200)
+
+
+class Diagram(BaseModel):
+    """Editable visual drawn with native shapes.
+
+    * ``mindmap``  - centre concept with related terms around it
+    * ``timeline`` - ordered roadmap of topics / stages
+    * ``cycle``    - steps arranged in a loop (used by process slides)
+    * ``flow``     - left-to-right flowchart (default for process slides)
+    """
+
+    kind: Literal["mindmap", "timeline", "cycle", "flow"] = "mindmap"
+    center: str | None = Field(default=None, max_length=120)
+    nodes: list[DiagramNode] = Field(default_factory=list, max_length=8)
 
 
 def _clean_list(items: list[str]) -> list[str]:
@@ -54,6 +74,7 @@ class Slide(BaseModel):
     definitions: list[Definition] = Field(default_factory=list)
     steps: list[str] = Field(default_factory=list)
     comparison: Comparison | None = None
+    diagram: Diagram | None = None
     notes: str | None = Field(default=None, max_length=6000)
     source_pages: list[int] = Field(default_factory=list)
     visual_suggestion: str | None = Field(default=None, max_length=300)
@@ -85,6 +106,7 @@ class SlideUpdate(BaseModel):
     definitions: list[Definition] | None = None
     steps: list[str] | None = None
     comparison: Comparison | None = None
+    diagram: Diagram | None = None
     notes: str | None = Field(default=None, max_length=6000)
 
 
