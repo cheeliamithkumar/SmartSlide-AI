@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     except Exception:  # pragma: no cover
         logger.exception("Initial cleanup failed")
     cleaner = None
-    if settings.environment != "test":
+    if settings.environment != "test" and not settings.serverless:
         cleaner = CleanupThread()
         cleaner.start()
     logger.info("SmartSlide AI started (AI provider: %s)", settings.ai_provider)

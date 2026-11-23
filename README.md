@@ -92,6 +92,7 @@ node scripts/e2e_smoke.cjs backend/samples/photosynthesis.pdf
 - [Architecture](docs/ARCHITECTURE.md)
 - [API reference](docs/API.md)
 - [GitHub setup](docs/GITHUB.md)
+- [Deploying to Vercel](docs/DEPLOY_VERCEL.md)
 
 ## Project structure
 

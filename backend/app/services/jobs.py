@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 from app.config import get_settings
 from app.database import session_scope
@@ -14,7 +13,6 @@ from app.services import storage
 from app.services.ai.factory import get_provider
 from app.services.chunker import chunk_document
 from app.services.content_processor import build_decks, merge_topics
-from app.services.pdf_extractor import extract_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -59,17 +57,15 @@ def run_job(job_id: str) -> None:
             if doc is None:
                 raise JobError("The source document no longer exists.")
             options = dict(job.options or {})
-            doc_id, doc_name, doc_path = doc.id, doc.original_filename, doc.stored_path
+            doc_id, doc_name = doc.id, doc.original_filename
             job.status, job.stage, job.progress, job.message = "running", "extracting", 5, "Extracting text from PDF"
 
-        if not Path(doc_path).exists():
-            raise JobError("The uploaded PDF has expired. Please upload it again.")
-
-        # 1. Extraction ---------------------------------------------------
-        extraction = storage.load_extraction(doc_id)
-        if extraction is None:
-            extraction = extract_pdf(Path(doc_path))
-            storage.save_extraction(doc_id, extraction)
+        # 1. Extraction (cached on disk and in the database) ---------------
+        with session_scope() as db:
+            try:
+                extraction = storage.get_or_extract(db.get(Document, doc_id))
+            except FileNotFoundError as exc:
+                raise JobError(str(exc)) from exc
         warnings = list(extraction.warnings)
         if extraction.total_words < 30:
             raise JobError(

@@ -1,0 +1,7 @@
+docs
+scripts
+backend/tests
+backend/.venv
+backend/storage
+frontend/node_modules
+frontend/dist

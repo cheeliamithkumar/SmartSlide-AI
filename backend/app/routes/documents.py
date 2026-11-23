@@ -70,6 +70,13 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         page_count=info.page_count, title=info.title, author=info.author, is_scanned=info.is_scanned,
         text_pages=info.text_pages, empty_pages=info.empty_pages, word_count=info.word_count,
     )
+    if settings.serverless:
+        # the uploaded file only exists on this instance: extract now and keep the text in the DB
+        try:
+            await run_in_threadpool(storage.get_or_extract, doc)
+        except Exception as exc:
+            path.unlink(missing_ok=True)
+            raise HTTPException(400, "The PDF could not be processed.") from exc
     db.add(doc)
     db.commit()
     db.refresh(doc)
@@ -90,7 +97,11 @@ async def get_content(
 ):
     """Extract (and cache) page-wise text, including OCR for scanned pages."""
     doc = get_document_or_404(document_id, db)
-    result = await run_in_threadpool(storage.get_or_extract, doc)
+    try:
+        result = await run_in_threadpool(storage.get_or_extract, doc)
+    except FileNotFoundError as exc:
+        raise HTTPException(410, str(exc)) from exc
+    db.commit()
     if page_from or page_to:
         lo, hi = page_from or 1, page_to or result.page_count
         if lo > hi:

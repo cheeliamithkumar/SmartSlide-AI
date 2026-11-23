@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.database import get_db
 from app.models import Document, Job
 from app.schemas import JobCreate, JobOut, PresentationBrief
@@ -39,7 +40,13 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
     db.add(job)
     db.commit()
     db.refresh(job)
-    job_service.submit(job.id)
+    if get_settings().run_jobs_inline:
+        # serverless: no background threads, so run the conversion inside this request
+        job_service.run_job(job.id)
+        db.expire_all()
+        job = db.get(Job, job.id)
+    else:
+        job_service.submit(job.id)
     return job_out(job)
 
 

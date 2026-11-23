@@ -32,21 +32,42 @@ def load_extraction(document_id: str) -> ExtractionResult | None:
         return None
 
 
+def extraction_from_doc(doc: Document) -> ExtractionResult | None:
+    if doc.extraction:
+        try:
+            return ExtractionResult.model_validate(doc.extraction)
+        except ValueError:
+            return None
+    return None
+
+
 def get_or_extract(doc: Document) -> ExtractionResult:
+    """Return the cached extraction (file or database), extracting the PDF if needed.
+
+    The result is stored on the Document row as well, so that stateless/serverless
+    instances that do not have the uploaded file can still process the document.
+    """
     from app.services.pdf_extractor import extract_pdf
 
-    cached = load_extraction(doc.id)
-    if cached is not None:
-        return cached
-    result = extract_pdf(Path(doc.stored_path))
-    save_extraction(doc.id, result)
-    return result
+    cached = load_extraction(doc.id) or extraction_from_doc(doc)
+    if cached is None:
+        path = Path(doc.stored_path)
+        if not path.exists():
+            raise FileNotFoundError("The uploaded PDF has expired. Please upload it again.")
+        cached = extract_pdf(path)
+        save_extraction(doc.id, cached)
+    if not doc.extraction:
+        doc.extraction = cached.model_dump(mode="json")
+    return cached
 
 
 def source_text_for_pages(document_id: str, pages: list[int], doc: Document | None = None) -> str:
     extraction = load_extraction(document_id)
     if extraction is None and doc is not None:
-        extraction = get_or_extract(doc)
+        try:
+            extraction = get_or_extract(doc)
+        except FileNotFoundError:
+            return ""
     if extraction is None:
         return ""
     wanted = set(pages)

@@ -32,6 +32,8 @@ class Document(Base):
     text_pages: Mapped[int] = mapped_column(Integer, default=0)
     empty_pages: Mapped[int] = mapped_column(Integer, default=0)
     word_count: Mapped[int] = mapped_column(Integer, default=0)
+    # cached page-wise extraction (JSON) so any server instance can process the document
+    extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     jobs: Mapped[list[Job]] = relationship(back_populates="document", cascade="all, delete-orphan")

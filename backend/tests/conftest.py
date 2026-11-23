@@ -20,6 +20,7 @@ os.environ.update({
     "MAX_PAGES": "40",
     "ANTHROPIC_API_KEY": "",
     "GEMINI_API_KEY": "",
+    **({"DATABASE_URL": os.environ["TEST_DATABASE_URL"]} if os.environ.get("TEST_DATABASE_URL") else {}),
 })
 
 BACKEND = Path(__file__).resolve().parent.parent

@@ -1,0 +1,2 @@
+# Python dependencies for the Vercel serverless function (see api/index.py).
+-r backend/requirements.txt

@@ -21,8 +21,13 @@ _SessionLocal: sessionmaker | None = None
 def _init_engine():
     global _engine, _SessionLocal
     url = get_settings().resolved_database_url
-    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-    _engine = create_engine(url, connect_args=connect_args, future=True)
+    if url.startswith("sqlite"):
+        _engine = create_engine(url, connect_args={"check_same_thread": False}, future=True)
+    else:
+        # serverless instances are short-lived: don't keep idle pooled connections
+        from sqlalchemy.pool import NullPool
+
+        _engine = create_engine(url, poolclass=NullPool, pool_pre_ping=True, future=True)
 
     if url.startswith("sqlite"):
         @event.listens_for(_engine, "connect")
@@ -33,6 +38,11 @@ def _init_engine():
             cur.close()
 
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
+
+    # Create tables on first use (serverless runtimes may not run the ASGI lifespan).
+    from app import models  # noqa: F401
+
+    Base.metadata.create_all(_engine)
 
 
 def get_engine():
